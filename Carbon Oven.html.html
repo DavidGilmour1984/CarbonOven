@@ -802,7 +802,7 @@ async function connectSerial() {
 
   try {
     port = await navigator.serial.requestPort();
-    await port.open({ baudRate: 9600 });
+    await port.open({ baudRate: 115200 });
 
     const encoder = new TextEncoder();
     writer = port.writable.getWriter();
@@ -904,21 +904,37 @@ function parseSerialLine(line) {
   if (parts[0] === "ERR") return;
 
   if (parts[0] === "STATUS") {
-    setRunState(parts[1] === "1");
-    currentTempBox.textContent = Number(parts[6] || 0).toFixed(2) + " °C";
-    targetTempBox.textContent = Number(parts[7] || 0).toFixed(2) + " °C";
-    elapsedBox.textContent = formatTime(Number(parts[4] || 0)) + " / " + formatTime(Number(parts[5] || 0));
-    dutyBox.textContent = Number(parts[8] || 0).toFixed(1) + " %";
-    return;
-  }
+  setRunState(parts[1] === "1");
 
+  currentTempBox.textContent = Number(parts[5]).toFixed(1) + " °C";
+  targetTempBox.textContent = Number(parts[6]).toFixed(1) + " °C";
+  elapsedBox.textContent = formatTime(Number(parts[3]));
+  dutyBox.textContent = Number(parts[7]).toFixed(0) + " %";
+
+  redrawAll();   // 🔥 ADD THIS LINE
+
+  return;
+}
+ 
   if (parts[0] === "SETTINGS") {
-    pidBandSlider.value = Number(parts[1] || 5);
-    minDutySlider.value = Number(parts[2] || 20);
-    windowSlider.value = Number(parts[3] || 2);
-    updateSliderLabels();
-    return;
-  }
+  const pid = Number(parts[1] || 5);
+  const duty = Number(parts[2] || 20);
+  const window = Number(parts[3] || 2);
+
+  // Update sliders
+  pidBandSlider.value = pid;
+  minDutySlider.value = duty;
+  windowSlider.value = window;
+
+  // Update labels
+  pidBandValue.textContent = pid.toFixed(1) + " °C";
+  minDutyValue.textContent = duty.toFixed(0) + " %";
+  windowValue.textContent = window.toFixed(1) + " s";
+
+  log("Settings updated from ESP32");
+
+  return;
+}
 
   if (parts[0] === "PROFILE") {
     if (parts.length >= 3) {
@@ -1071,9 +1087,10 @@ document.getElementById("applyAxesBtn").addEventListener("click", () => {
 document.getElementById("connectBtn").addEventListener("click", connectSerial);
 
 document.getElementById("reloadBtn").addEventListener("click", async () => {
-  await sendLine("GET_STATUS");
-  await sendLine("GET_PROFILE");
+  log("Reloading from ESP32...");
   await sendLine("GET_SETTINGS");
+  await sendLine("GET_PROFILE");
+  await sendLine("GET_STATUS");
 });
 
 document.getElementById("clearActualBtn").addEventListener("click", () => {
