@@ -1,0 +1,172 @@
+#include <max6675.h>
+
+// ================= SERIAL =================
+#define SERIAL_BAUD 9600
+
+// ================= PINS =================
+#define SSR_PIN          4
+#define THERMO_SCK_PIN  18
+#define THERMO_CS_PIN    5
+#define THERMO_SO_PIN   19
+
+MAX6675 thermocouple(THERMO_SCK_PIN, THERMO_CS_PIN, THERMO_SO_PIN);
+
+// ================= PROFILE =================
+struct Step {
+  float temp;
+  int duration;
+};
+
+Step profile[] = {
+  {30, 30},
+  {40, 60},
+  {45, 30},
+  {50, 60},
+  {42, 30},
+  {48, 30}
+};
+
+const int NUM_STEPS = sizeof(profile) / sizeof(profile[0]);
+
+bool running = false;
+unsigned long startTime = 0;
+unsigned long lastUpdate = 0;
+
+float propStartBelow = 5.0;
+float propRange = 5.0;
+
+// ================= TARGET =================
+float getTargetTemp(unsigned long t) {
+  unsigned long elapsed = t / 1000;
+  int cumulative = 0;
+
+  for (int i = 0; i < NUM_STEPS; i++) {
+
+    float startTemp = (i == 0) ? profile[0].temp : profile[i-1].temp;
+    float endTemp = profile[i].temp;
+
+    if (elapsed < cumulative + profile[i].duration) {
+      float progress = float(elapsed - cumulative) / profile[i].duration;
+      return startTemp + progress * (endTemp - startTemp);
+    }
+
+    cumulative += profile[i].duration;
+  }
+
+  return profile[NUM_STEPS - 1].temp;
+}
+
+int getTotalTime() {
+  int total = 0;
+  for (int i = 0; i < NUM_STEPS; i++) total += profile[i].duration;
+  return total;
+}
+
+// ================= SSR =================
+void controlSSR(float currentTemp, float targetTemp) {
+
+  if (currentTemp > targetTemp) {
+    digitalWrite(SSR_PIN, LOW);
+    return;
+  }
+
+  float error = targetTemp - currentTemp;
+  float duty = 1.0;
+
+  if (error < propStartBelow) {
+    duty = error / propRange;
+    if (duty < 0) duty = 0;
+  }
+
+  int onTime = duty * 1000;
+
+  if (millis() % 1000 < onTime) digitalWrite(SSR_PIN, HIGH);
+  else digitalWrite(SSR_PIN, LOW);
+}
+
+// ================= SEND PROFILE =================
+void sendProfile() {
+
+  Serial.println("PROFILE_START");
+
+  int cumulative = 0;
+
+  for (int i = 0; i < NUM_STEPS; i++) {
+
+    float startTemp = (i == 0) ? profile[0].temp : profile[i-1].temp;
+    float endTemp = profile[i].temp;
+
+    for (int s = 0; s <= profile[i].duration; s++) {
+
+      float progress = float(s) / profile[i].duration;
+      float temp = startTemp + progress * (endTemp - startTemp);
+
+      Serial.print("P,");
+      Serial.print(cumulative + s);
+      Serial.print(",");
+      Serial.println(temp);
+    }
+
+    cumulative += profile[i].duration;
+  }
+
+  Serial.println("PROFILE_END");
+}
+
+// ================= SETUP =================
+void setup() {
+  Serial.begin(SERIAL_BAUD);
+  pinMode(SSR_PIN, OUTPUT);
+  digitalWrite(SSR_PIN, LOW);
+
+  delay(2000); // allow serial stabilisation
+  Serial.println("READY");
+}
+
+// ================= LOOP =================
+void loop() {
+
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+
+    if (cmd == "PROFILE") sendProfile();
+
+    if (cmd == "START") {
+      running = true;
+      startTime = millis();
+    }
+
+    if (cmd == "STOP") {
+      running = false;
+      digitalWrite(SSR_PIN, LOW);
+    }
+  }
+
+  if (running && millis() - lastUpdate >= 1000) {
+
+    lastUpdate = millis();
+
+    unsigned long t = millis() - startTime;
+    int totalTime = getTotalTime();
+
+    if (t / 1000 >= totalTime) {
+      running = false;
+      digitalWrite(SSR_PIN, LOW);
+      Serial.println("COMPLETE");
+      return;
+    }
+
+    float currentTemp = thermocouple.readCelsius();
+    float targetTemp = getTargetTemp(t);
+
+    controlSSR(currentTemp, targetTemp);
+
+    Serial.print("D,");
+    Serial.print((int)(t / 1000));
+    Serial.print(",");
+    Serial.print(currentTemp);
+    Serial.print(",");
+    Serial.println(targetTemp);
+  }
+}
