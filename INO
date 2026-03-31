@@ -1,7 +1,7 @@
 #include <max6675.h>
 
 // ================= SERIAL =================
-#define SERIAL_BAUD 9600
+#define SERIAL_BAUD 115200
 
 // ================= PINS =================
 #define SSR_PIN          4
@@ -18,12 +18,9 @@ struct Step {
 };
 
 Step profile[] = {
-  {30, 30},
-  {40, 60},
-  {45, 30},
-  {50, 60},
-  {42, 30},
-  {48, 30}
+  {35, 1200},   // hold 35°C for 20 min
+  {50, 1200},   // ramp from 35 → 50 over 20 min
+  {50, 1200}    // hold 50°C for 20 min
 };
 
 const int NUM_STEPS = sizeof(profile) / sizeof(profile[0]);
@@ -91,28 +88,22 @@ void sendProfile() {
 
   int cumulative = 0;
 
+  // first point (t=0)
+  Serial.print("P,0,");
+  Serial.println(profile[0].temp);
+
   for (int i = 0; i < NUM_STEPS; i++) {
 
-    float startTemp = (i == 0) ? profile[0].temp : profile[i-1].temp;
-    float endTemp = profile[i].temp;
-
-    for (int s = 0; s <= profile[i].duration; s++) {
-
-      float progress = float(s) / profile[i].duration;
-      float temp = startTemp + progress * (endTemp - startTemp);
-
-      Serial.print("P,");
-      Serial.print(cumulative + s);
-      Serial.print(",");
-      Serial.println(temp);
-    }
-
     cumulative += profile[i].duration;
+
+    Serial.print("P,");
+    Serial.print(cumulative);
+    Serial.print(",");
+    Serial.println(profile[i].temp);
   }
 
   Serial.println("PROFILE_END");
 }
-
 // ================= SETUP =================
 void setup() {
   Serial.begin(SERIAL_BAUD);
