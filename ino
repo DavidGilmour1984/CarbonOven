@@ -1,267 +1,329 @@
+#include <Arduino.h>
 #include <max6675.h>
+
+// ================= PINS =================
+#define CLK_PIN 18
+#define CS_PIN  5
+#define DO_PIN  19
+#define SSR_PIN 4
+
+// ================= MAX6675 =================
+MAX6675 thermocouple(CLK_PIN, CS_PIN, DO_PIN);
 
 // ================= SERIAL =================
 #define SERIAL_BAUD 9600
 
-// ================= PINS =================
-#define SSR_PIN          4
-#define THERMO_SCK_PIN  18
-#define THERMO_CS_PIN    5
-#define THERMO_SO_PIN   19
-
-// ================= THERMOCOUPLE =================
-MAX6675 thermocouple(THERMO_SCK_PIN, THERMO_CS_PIN, THERMO_SO_PIN);
-
-// ================= RUN PROFILE =================
-const int MAX_POINTS = 20;
+// ================= PROFILE =================
+const int MAX_POINTS = 32;
 
 struct ProfilePoint {
-  uint32_t timeSec;   // cumulative time from start
+  float timeSec;
   float tempC;
 };
 
 ProfilePoint profile[MAX_POINTS];
 int profileCount = 0;
+char profileName[64] = "Untitled";
 
 // ================= CONTROL SETTINGS =================
-float proportionalBand = 20.0f;   // degrees below target where proportional control begins
-float proportionalCurve = 1.5f;   // >1 makes shorter pulses nearer target
-uint32_t windowMs = 2000;         // SSR time-proportioning window
+float pidBandC = 5.0f;         // start proportional pulsing this many degrees below target
+float minDutyPercent = 20.0f;  // duty at target temperature
+float controlWindowSec = 2.0f; // SSR time window
+bool profileLoaded = false;
 
-// ================= RUN STATE =================
+// ================= RUNTIME =================
 bool runActive = false;
-bool configLoaded = false;
-uint32_t runStartMs = 0;
-uint32_t windowStartMs = 0;
+unsigned long runStartMs = 0;
+unsigned long lastTempReadMs = 0;
+unsigned long lastTelemetryMs = 0;
+unsigned long windowStartMs = 0;
 
-float currentTemp = 0.0f;
-float currentTarget = 0.0f;
-float currentDuty = 0.0f;
-bool heaterOn = false;
-int currentSegment = 0;
+float currentTempC = 0.0f;
+float targetTempC = 0.0f;
+float currentDutyPercent = 0.0f;
+bool ssrState = false;
 
-// ================= TIMING =================
-uint32_t lastTempReadMs = 0;
-uint32_t lastStatusMs = 0;
-const uint32_t tempReadIntervalMs = 250;
-const uint32_t statusIntervalMs   = 500;
-
-// ================= SERIAL BUFFER =================
+// ================= LINE BUFFER =================
 String rxLine = "";
 
-// ===================================================
-// ================= HELPER FUNCTIONS =================
-// ===================================================
+// =====================================================
+// ================= UTILITY FUNCTIONS =================
+// =====================================================
 
-void setHeater(bool on) {
-  heaterOn = on;
-  digitalWrite(SSR_PIN, on ? HIGH : LOW);
+float readThermocoupleC() {
+  float t = thermocouple.readCelsius();
+  if (isnan(t)) return currentTempC;
+  return t;
 }
 
 void clearProfile() {
   profileCount = 0;
-  configLoaded = false;
-  runActive = false;
-  currentSegment = 0;
-  currentTarget = 0.0f;
-  currentDuty = 0.0f;
-  setHeater(false);
+  profileLoaded = false;
+  strcpy(profileName, "Untitled");
 }
 
-bool addProfilePoint(uint32_t timeSec, float tempC) {
-  if (profileCount >= MAX_POINTS) return false;
-
-  if (profileCount > 0) {
-    if (timeSec <= profile[profileCount - 1].timeSec) {
-      return false;
+void sortProfileByTime() {
+  for (int i = 0; i < profileCount - 1; i++) {
+    for (int j = i + 1; j < profileCount; j++) {
+      if (profile[j].timeSec < profile[i].timeSec) {
+        ProfilePoint temp = profile[i];
+        profile[i] = profile[j];
+        profile[j] = temp;
+      }
     }
   }
-
-  profile[profileCount].timeSec = timeSec;
-  profile[profileCount].tempC = tempC;
-  profileCount++;
-  configLoaded = (profileCount >= 2);
-  return true;
 }
 
-float readTemperatureC() {
-  float t = thermocouple.readCelsius();
-
-  if (isnan(t) || t < -50 || t > 1400) {
-    return currentTemp;
-  }
-
-  return t;
+float getProfileDurationSec() {
+  if (profileCount <= 0) return 0.0f;
+  return profile[profileCount - 1].timeSec;
 }
 
-float getTargetAtTime(uint32_t elapsedSec, int &segmentOut) {
-  if (profileCount == 0) {
-    segmentOut = 0;
-    return 0.0f;
-  }
+float getTargetTempAtTime(float elapsedSec) {
+  if (profileCount <= 0) return 0.0f;
+  if (profileCount == 1) return profile[0].tempC;
 
-  if (elapsedSec <= profile[0].timeSec) {
-    segmentOut = 0;
-    return profile[0].tempC;
-  }
+  if (elapsedSec <= profile[0].timeSec) return profile[0].tempC;
+  if (elapsedSec >= profile[profileCount - 1].timeSec) return profile[profileCount - 1].tempC;
 
   for (int i = 0; i < profileCount - 1; i++) {
-    uint32_t t0 = profile[i].timeSec;
-    uint32_t t1 = profile[i + 1].timeSec;
+    float t0 = profile[i].timeSec;
+    float t1 = profile[i + 1].timeSec;
     float y0 = profile[i].tempC;
     float y1 = profile[i + 1].tempC;
 
     if (elapsedSec >= t0 && elapsedSec <= t1) {
-      float frac = float(elapsedSec - t0) / float(t1 - t0);
-      segmentOut = i + 1;
+      float span = t1 - t0;
+      if (span <= 0.0f) return y1;
+      float frac = (elapsedSec - t0) / span;
       return y0 + frac * (y1 - y0);
     }
   }
 
-  segmentOut = profileCount - 1;
   return profile[profileCount - 1].tempC;
 }
 
-float computeDuty(float targetC, float actualC) {
-  float error = targetC - actualC;
+float computeDutyPercent(float currentTemp, float targetTemp) {
+  float error = targetTemp - currentTemp;
 
-  if (error <= 0.0f) return 0.0f;
-  if (proportionalBand <= 0.01f) return (error > 0.0f) ? 1.0f : 0.0f;
+  // Overshoot protection
+  if (error <= -0.3f) return 0.0f;
 
-  if (error >= proportionalBand) return 1.0f;
+  // Far below target = full on
+  if (error >= pidBandC) return 100.0f;
 
-  float x = error / proportionalBand;
-  if (x < 0.0f) x = 0.0f;
-  if (x > 1.0f) x = 1.0f;
+  // At or very near target = minimum duty
+  if (error <= 0.0f) return minDutyPercent;
 
-  float duty = powf(x, proportionalCurve);
+  // Proportional region
+  float frac = error / pidBandC;  // 0..1
+  float duty = minDutyPercent + frac * (100.0f - minDutyPercent);
 
   if (duty < 0.0f) duty = 0.0f;
-  if (duty > 1.0f) duty = 1.0f;
-
+  if (duty > 100.0f) duty = 100.0f;
   return duty;
 }
 
-void stopRun(bool sendDone) {
-  runActive = false;
-  currentDuty = 0.0f;
-  setHeater(false);
+void applySSRWindow(float dutyPercent) {
+  unsigned long now = millis();
+  unsigned long windowMs = (unsigned long)(controlWindowSec * 1000.0f);
 
-  if (sendDone) {
-    Serial.println("DONE");
-  }
-}
+  if (windowMs < 200) windowMs = 200;
 
-void startRun() {
-  if (!configLoaded || profileCount < 2) {
-    Serial.println("ERR,NO_VALID_PROFILE");
-    return;
-  }
-
-  runActive = true;
-  runStartMs = millis();
-  windowStartMs = millis();
-  currentSegment = 0;
-  Serial.println("ACK,STARTED");
-}
-
-void updateRunControl() {
-  if (!runActive) {
-    setHeater(false);
-    return;
-  }
-
-  uint32_t now = millis();
-  uint32_t elapsedMs = now - runStartMs;
-  uint32_t elapsedSec = elapsedMs / 1000UL;
-
-  uint32_t endSec = profile[profileCount - 1].timeSec;
-  if (elapsedSec >= endSec) {
-    currentTarget = profile[profileCount - 1].tempC;
-    stopRun(true);
-    return;
-  }
-
-  currentTarget = getTargetAtTime(elapsedSec, currentSegment);
-  currentDuty = computeDuty(currentTarget, currentTemp);
-
-  if ((now - windowStartMs) >= windowMs) {
+  if (now - windowStartMs >= windowMs) {
     windowStartMs = now;
   }
 
-  uint32_t inWindow = now - windowStartMs;
-  uint32_t onTime = (uint32_t)(currentDuty * windowMs);
+  unsigned long onTimeMs = (unsigned long)(windowMs * (dutyPercent / 100.0f));
+  unsigned long elapsedInWindow = now - windowStartMs;
 
-  if (inWindow < onTime) {
-    setHeater(true);
-  } else {
-    setHeater(false);
+  bool shouldBeOn = elapsedInWindow < onTimeMs;
+  ssrState = shouldBeOn;
+  digitalWrite(SSR_PIN, ssrState ? HIGH : LOW);
+}
+
+void stopRun() {
+  runActive = false;
+  currentDutyPercent = 0.0f;
+  ssrState = false;
+  digitalWrite(SSR_PIN, LOW);
+}
+
+void startRun() {
+  if (!profileLoaded || profileCount < 1) return;
+  runActive = true;
+  runStartMs = millis();
+  windowStartMs = millis();
+}
+
+void sendOk(const String &msg) {
+  Serial.println("OK," + msg);
+}
+
+void sendErr(const String &msg) {
+  Serial.println("ERR," + msg);
+}
+
+void sendTelemetry() {
+  float elapsedSec = runActive ? ((millis() - runStartMs) / 1000.0f) : 0.0f;
+  float durationSec = getProfileDurationSec();
+
+  Serial.print("TELEMETRY,");
+  Serial.print(millis());
+  Serial.print(",");
+  Serial.print(runActive ? 1 : 0);
+  Serial.print(",");
+  Serial.print(profileName);
+  Serial.print(",");
+  Serial.print(elapsedSec, 2);
+  Serial.print(",");
+  Serial.print(durationSec, 2);
+  Serial.print(",");
+  Serial.print(currentTempC, 2);
+  Serial.print(",");
+  Serial.print(targetTempC, 2);
+  Serial.print(",");
+  Serial.print(currentDutyPercent, 1);
+  Serial.print(",");
+  Serial.println(ssrState ? 1 : 0);
+}
+
+void sendProfile() {
+  Serial.print("PROFILE,");
+  Serial.print(profileName);
+  Serial.print(",");
+  Serial.print(profileCount);
+
+  for (int i = 0; i < profileCount; i++) {
+    Serial.print(",");
+    Serial.print(profile[i].timeSec, 2);
+    Serial.print(",");
+    Serial.print(profile[i].tempC, 2);
   }
+
+  Serial.println();
+}
+
+void sendSettings() {
+  Serial.print("SETTINGS,");
+  Serial.print(pidBandC, 2);
+  Serial.print(",");
+  Serial.print(minDutyPercent, 2);
+  Serial.print(",");
+  Serial.println(controlWindowSec, 2);
 }
 
 void sendStatus() {
-  uint32_t now = millis();
-  uint32_t runSec = runActive ? ((now - runStartMs) / 1000UL) : 0UL;
+  float elapsedSec = runActive ? ((millis() - runStartMs) / 1000.0f) : 0.0f;
 
   Serial.print("STATUS,");
   Serial.print(runActive ? 1 : 0);
   Serial.print(",");
-  Serial.print(runSec);
+  Serial.print(profileLoaded ? 1 : 0);
   Serial.print(",");
-  Serial.print(currentSegment);
+  Serial.print(profileName);
   Serial.print(",");
-  Serial.print(currentTemp, 2);
+  Serial.print(profileCount);
   Serial.print(",");
-  Serial.print(currentTarget, 2);
+  Serial.print(elapsedSec, 2);
   Serial.print(",");
-  Serial.print(currentDuty, 3);
+  Serial.print(getProfileDurationSec(), 2);
   Serial.print(",");
-  Serial.print(heaterOn ? 1 : 0);
+  Serial.print(currentTempC, 2);
   Serial.print(",");
-  Serial.print(proportionalBand, 2);
+  Serial.print(targetTempC, 2);
   Serial.print(",");
-  Serial.print(proportionalCurve, 2);
-  Serial.print(",");
-  Serial.println(windowMs);
+  Serial.println(currentDutyPercent, 1);
 }
 
-void sendProfile() {
-  Serial.print("PROFILE_COUNT,");
-  Serial.println(profileCount);
+bool parseProfileLine(String line) {
+  // FORMAT:
+  // PROFILE,<name>,<count>,<time0>,<temp0>,<time1>,<temp1>...
+  clearProfile();
 
-  for (int i = 0; i < profileCount; i++) {
-    Serial.print("PROFILE,");
-    Serial.print(i);
-    Serial.print(",");
-    Serial.print(profile[i].timeSec);
-    Serial.print(",");
-    Serial.println(profile[i].tempC, 2);
+  line.trim();
+  int firstComma = line.indexOf(',');
+  if (firstComma < 0) {
+    sendErr("Bad PROFILE format");
+    return false;
   }
+
+  String payload = line.substring(firstComma + 1);
+
+  int comma1 = payload.indexOf(',');
+  int comma2 = payload.indexOf(',', comma1 + 1);
+  if (comma1 < 0 || comma2 < 0) {
+    sendErr("Bad PROFILE header");
+    return false;
+  }
+
+  String nameStr = payload.substring(0, comma1);
+  String countStr = payload.substring(comma1 + 1, comma2);
+
+  nameStr.trim();
+  countStr.trim();
+
+  int count = countStr.toInt();
+  if (count < 1 || count > MAX_POINTS) {
+    sendErr("Invalid profile point count");
+    return false;
+  }
+
+  nameStr.toCharArray(profileName, sizeof(profileName));
+
+  String rest = payload.substring(comma2 + 1);
+
+  int idx = 0;
+  while (rest.length() > 0 && idx < count) {
+    int c1 = rest.indexOf(',');
+    if (c1 < 0) {
+      sendErr("Missing temperature value");
+      clearProfile();
+      return false;
+    }
+
+    String timeStr = rest.substring(0, c1);
+    rest = rest.substring(c1 + 1);
+
+    String tempStr;
+    int c2 = rest.indexOf(',');
+    if (c2 < 0) {
+      tempStr = rest;
+      rest = "";
+    } else {
+      tempStr = rest.substring(0, c2);
+      rest = rest.substring(c2 + 1);
+    }
+
+    timeStr.trim();
+    tempStr.trim();
+
+    profile[idx].timeSec = timeStr.toFloat();
+    profile[idx].tempC = tempStr.toFloat();
+    idx++;
+  }
+
+  if (idx != count) {
+    clearProfile();
+    sendErr("Point count mismatch");
+    return false;
+  }
+
+  profileCount = count;
+  sortProfileByTime();
+  profileLoaded = true;
+
+  sendOk("Profile loaded");
+  sendProfile();
+  return true;
 }
 
-void processCommand(String line) {
+void handleCommand(String line) {
   line.trim();
   if (line.length() == 0) return;
 
   if (line == "PING") {
-    Serial.println("ACK,PONG");
-    return;
-  }
-
-  if (line == "CLEAR") {
-    clearProfile();
-    Serial.println("ACK,CLEARED");
-    return;
-  }
-
-  if (line == "START") {
-    startRun();
-    return;
-  }
-
-  if (line == "STOP") {
-    stopRun(false);
-    Serial.println("ACK,STOPPED");
+    sendOk("PONG");
     return;
   }
 
@@ -275,117 +337,142 @@ void processCommand(String line) {
     return;
   }
 
-  if (line.startsWith("STEP,")) {
-    int c1 = line.indexOf(',');
-    int c2 = line.indexOf(',', c1 + 1);
-
-    if (c1 < 0 || c2 < 0) {
-      Serial.println("ERR,BAD_STEP_FORMAT");
-      return;
-    }
-
-    uint32_t timeSec = (uint32_t)line.substring(c1 + 1, c2).toInt();
-    float tempC = line.substring(c2 + 1).toFloat();
-
-    if (!addProfilePoint(timeSec, tempC)) {
-      Serial.println("ERR,STEP_REJECTED");
-      return;
-    }
-
-    Serial.print("ACK,STEP_ADDED,");
-    Serial.print(timeSec);
-    Serial.print(",");
-    Serial.println(tempC, 2);
+  if (line == "GET_SETTINGS") {
+    sendSettings();
     return;
   }
 
-  if (line.startsWith("SETTINGS,")) {
-    int c1 = line.indexOf(',');
-    int c2 = line.indexOf(',', c1 + 1);
-    int c3 = line.indexOf(',', c2 + 1);
-
-    if (c1 < 0 || c2 < 0 || c3 < 0) {
-      Serial.println("ERR,BAD_SETTINGS_FORMAT");
+  if (line == "START") {
+    if (!profileLoaded || profileCount < 1) {
+      sendErr("No profile loaded");
       return;
     }
-
-    float newBand = line.substring(c1 + 1, c2).toFloat();
-    float newCurve = line.substring(c2 + 1, c3).toFloat();
-    uint32_t newWindow = (uint32_t)line.substring(c3 + 1).toInt();
-
-    if (newBand < 0.1f) newBand = 0.1f;
-    if (newCurve < 0.2f) newCurve = 0.2f;
-    if (newWindow < 250) newWindow = 250;
-    if (newWindow > 10000) newWindow = 10000;
-
-    proportionalBand = newBand;
-    proportionalCurve = newCurve;
-    windowMs = newWindow;
-
-    Serial.print("ACK,SETTINGS,");
-    Serial.print(proportionalBand, 2);
-    Serial.print(",");
-    Serial.print(proportionalCurve, 2);
-    Serial.print(",");
-    Serial.println(windowMs);
+    startRun();
+    sendOk("Run started");
+    sendStatus();
     return;
   }
 
-  Serial.println("ERR,UNKNOWN_COMMAND");
+  if (line == "STOP") {
+    stopRun();
+    sendOk("Run stopped");
+    sendStatus();
+    return;
+  }
+
+  if (line.startsWith("SET_PID_BAND,")) {
+    String v = line.substring(String("SET_PID_BAND,").length());
+    pidBandC = v.toFloat();
+    if (pidBandC < 0.1f) pidBandC = 0.1f;
+    sendOk("PID band updated");
+    sendSettings();
+    return;
+  }
+
+  if (line.startsWith("SET_MIN_DUTY,")) {
+    String v = line.substring(String("SET_MIN_DUTY,").length());
+    minDutyPercent = v.toFloat();
+    if (minDutyPercent < 0.0f) minDutyPercent = 0.0f;
+    if (minDutyPercent > 100.0f) minDutyPercent = 100.0f;
+    sendOk("Min duty updated");
+    sendSettings();
+    return;
+  }
+
+  if (line.startsWith("SET_WINDOW,")) {
+    String v = line.substring(String("SET_WINDOW,").length());
+    controlWindowSec = v.toFloat();
+    if (controlWindowSec < 0.2f) controlWindowSec = 0.2f;
+    if (controlWindowSec > 30.0f) controlWindowSec = 30.0f;
+    sendOk("Window updated");
+    sendSettings();
+    return;
+  }
+
+  if (line.startsWith("PROFILE,")) {
+    parseProfileLine(line);
+    return;
+  }
+
+  sendErr("Unknown command");
 }
 
 void readSerialLines() {
   while (Serial.available()) {
-    char ch = (char)Serial.read();
+    char c = (char)Serial.read();
 
-    if (ch == '\n') {
-      processCommand(rxLine);
+    if (c == '\r') continue;
+
+    if (c == '\n') {
+      handleCommand(rxLine);
       rxLine = "";
-    } else if (ch != '\r') {
-      rxLine += ch;
-      if (rxLine.length() > 200) {
-        rxLine = "";
-        Serial.println("ERR,LINE_TOO_LONG");
-      }
+    } else {
+      rxLine += c;
+      if (rxLine.length() > 800) rxLine = "";
     }
   }
 }
 
-// ===================================================
-// ====================== SETUP =======================
-// ===================================================
+// =====================================================
+// ======================= SETUP ========================
+// =====================================================
 
 void setup() {
   pinMode(SSR_PIN, OUTPUT);
-  setHeater(false);
+  digitalWrite(SSR_PIN, LOW);
 
   Serial.begin(SERIAL_BAUD);
   delay(500);
 
-  currentTemp = readTemperatureC();
+  currentTempC = readThermocoupleC();
+  targetTempC = currentTempC;
 
-  Serial.println("READY");
-  Serial.println("COMMANDS:CLEAR|STEP,timeSec,tempC|SETTINGS,band,curve,windowMs|START|STOP|GET_STATUS|GET_PROFILE");
+  Serial.println("HEADINGS,time_ms,run_active,profile_name,elapsed_s,total_s,current_temp_c,target_temp_c,duty_percent,ssr_on");
+  sendOk("ESP32 carbon cure controller ready");
+  sendStatus();
+  sendSettings();
 }
 
-// ===================================================
-// ======================= LOOP =======================
-// ===================================================
+// =====================================================
+// ======================== LOOP ========================
+// =====================================================
 
 void loop() {
   readSerialLines();
 
-  uint32_t now = millis();
+  unsigned long now = millis();
 
-  if ((now - lastTempReadMs) >= tempReadIntervalMs) {
+  if (now - lastTempReadMs >= 500) {
     lastTempReadMs = now;
-    currentTemp = readTemperatureC();
+    currentTempC = readThermocoupleC();
   }
 
-  updateRunControl();
+  if (runActive) {
+    float elapsedSec = (now - runStartMs) / 1000.0f;
+    float durationSec = getProfileDurationSec();
 
-  if ((now - lastStatusMs) >= statusIntervalMs) {
-    lastStatusMs = now;
-    sendStatus();
+    if (elapsedSec >= durationSec) {
+      targetTempC = getTargetTempAtTime(durationSec);
+      currentDutyPercent = computeDutyPercent(currentTempC, targetTempC);
+      applySSRWindow(currentDutyPercent);
+
+      // end run after final point
+      stopRun();
+      sendOk("Profile finished");
+      sendStatus();
+    } else {
+      targetTempC = getTargetTempAtTime(elapsedSec);
+      currentDutyPercent = computeDutyPercent(currentTempC, targetTempC);
+      applySSRWindow(currentDutyPercent);
+    }
+  } else {
+    currentDutyPercent = 0.0f;
+    digitalWrite(SSR_PIN, LOW);
+    ssrState = false;
+  }
+
+  if (now - lastTelemetryMs >= 500) {
+    lastTelemetryMs = now;
+    sendTelemetry();
   }
 }
