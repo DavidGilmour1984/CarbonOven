@@ -72,7 +72,7 @@ const chart = new Chart(document.getElementById('chart'), {
 async function connect() {
 
   port = await navigator.serial.requestPort();
-  await port.open({ baudRate: 9600 });
+  await port.open({ baudRate: 115200 });
 
   const decoder = new TextDecoderStream();
   port.readable.pipeTo(decoder.writable);
@@ -111,17 +111,49 @@ function processLine(line) {
     expectedTemp = [];
     actualData = [];
     receivingProfile = true;
-    profileReceived = false;
     return;
   }
 
   if (line === "PROFILE_END") {
     receivingProfile = false;
-    profileReceived = true;
 
-    chart.data.labels = expectedTime;
-    chart.data.datasets[0].data = expectedTemp;
-    chart.data.datasets[1].data = new Array(expectedTime.length).fill(null);
+    // build labels from 0 → max time
+    let maxTime = expectedTime[expectedTime.length - 1];
+
+    let labels = [];
+    let expectedFull = [];
+    let actualFull = [];
+
+    let index = 0;
+
+    for (let t = 0; t <= maxTime; t++) {
+
+      labels.push(t);
+
+      // move to next segment
+      if (index < expectedTime.length - 1 && t > expectedTime[index + 1]) {
+        index++;
+      }
+
+      // linear interpolation between points
+      let t0 = expectedTime[index];
+      let t1 = expectedTime[Math.min(index + 1, expectedTime.length - 1)];
+
+      let y0 = expectedTemp[index];
+      let y1 = expectedTemp[Math.min(index + 1, expectedTemp.length - 1)];
+
+      let temp;
+
+      if (t1 === t0) temp = y0;
+      else temp = y0 + (t - t0) * (y1 - y0) / (t1 - t0);
+
+      expectedFull.push(temp);
+      actualFull.push(null);
+    }
+
+    chart.data.labels = labels;
+    chart.data.datasets[0].data = expectedFull;
+    chart.data.datasets[1].data = actualFull;
 
     chart.update();
     return;
@@ -129,12 +161,14 @@ function processLine(line) {
 
   let parts = line.split(",");
 
+  // PROFILE POINTS
   if (receivingProfile && parts[0] === "P") {
     expectedTime.push(Number(parts[1]));
     expectedTemp.push(Number(parts[2]));
     return;
   }
 
+  // LIVE DATA
   if (parts[0] === "D") {
 
     let t = Number(parts[1]);
@@ -149,7 +183,6 @@ function processLine(line) {
       chart.data.datasets[1].data[t] = temp;
     }
 
-    // throttle chart updates (fix freeze)
     if (millis() - lastChartUpdate > 300) {
       chart.update();
       lastChartUpdate = millis();
