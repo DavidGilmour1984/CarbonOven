@@ -1,1179 +1,170 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Carbon Cure Ramp and Soak Controller</title>
+<title>Ramp Controller</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
 <style>
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    font-family: Helvetica, Arial, sans-serif;
-    background: #f5f7fb;
-    color: #1f2937;
-  }
-  .wrap {
-    display: flex;
-    gap: 18px;
-    padding: 18px;
-    min-height: 100vh;
-  }
-  .left {
-    width: 40%;
-    min-width: 360px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .right {
-    width: 60%;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .card {
-    background: white;
-    border-radius: 18px;
-    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
-    padding: 16px;
-  }
-  h1, h2, h3 {
-    margin: 0 0 12px 0;
-    font-weight: 700;
-  }
-  h1 {
-    font-size: 28px;
-    color: #111827;
-  }
-  h2 {
-    font-size: 22px;
-    color: #111827;
-  }
-  .grid2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  }
-  .grid3 {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 12px;
-  }
-  label {
-    display: block;
-    font-size: 15px;
-    font-weight: 700;
-    margin-bottom: 6px;
-  }
-  input[type="text"],
-  input[type="number"],
-  textarea,
-  select {
-    width: 100%;
-    border: 1px solid #d1d5db;
-    border-radius: 12px;
-    padding: 12px;
-    font-size: 18px;
-    font-family: Helvetica, Arial, sans-serif;
-    background: #ffffff;
-  }
-  input[type="range"] {
-    width: 100%;
-  }
-  button {
-    width: 100%;
-    border: none;
-    border-radius: 12px;
-    padding: 14px 16px;
-    font-size: 18px;
-    font-weight: 700;
-    cursor: pointer;
-    background: #2563eb;
-    color: white;
-    transition: 0.18s ease;
-  }
-  button:hover { background: #1e40af; }
-  button.secondary { background: #475569; }
-  button.secondary:hover { background: #334155; }
-  button.green { background: #16a34a; }
-  button.green:hover { background: #15803d; }
-  button.red { background: #dc2626; }
-  button.red:hover { background: #b91c1c; }
-  button.orange { background: #ea580c; }
-  button.orange:hover { background: #c2410c; }
-  button:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-  .mini {
-    font-size: 14px;
-    color: #475569;
-  }
-  .valueBox {
-    font-size: 20px;
-    font-weight: 700;
-    background: #eff6ff;
-    border-radius: 12px;
-    padding: 10px 12px;
-    min-height: 48px;
-    display: flex;
-    align-items: center;
-  }
-  .statusLine {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-  .bigStatus {
-    font-size: 24px;
-    font-weight: 700;
-    padding: 12px;
-    border-radius: 14px;
-    background: #e2e8f0;
-    text-align: center;
-  }
-  .connected { background: #dcfce7; color: #166534; }
-  .disconnected { background: #fee2e2; color: #991b1b; }
-  .running { background: #dbeafe; color: #1d4ed8; }
-  .stopped { background: #f1f5f9; color: #334155; }
-  canvas {
-    width: 100%;
-    height: 360px;
-    border-radius: 16px;
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    display: block;
-  }
-  .tableWrap {
-    max-height: 260px;
-    overflow: auto;
-    border: 1px solid #e5e7eb;
-    border-radius: 14px;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 15px;
-  }
-  th, td {
-    padding: 10px 8px;
-    border-bottom: 1px solid #e5e7eb;
-    text-align: left;
-  }
-  th {
-    position: sticky;
-    top: 0;
-    background: #eff6ff;
-    z-index: 1;
-  }
-  .rowButtons {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-  .logBox {
-    width: 100%;
-    height: 180px;
-    border: 1px solid #d1d5db;
-    border-radius: 12px;
-    padding: 12px;
-    font-size: 14px;
-    font-family: Consolas, monospace;
-    background: #f8fafc;
-    resize: vertical;
-  }
-  .sliderValue {
-    text-align: right;
-    font-weight: 700;
-    font-size: 18px;
-    color: #1d4ed8;
-  }
+body { font-family: Helvetica; background:#f5f7fb; display:flex; margin:0; height:100vh;}
+#left { width:30%; padding:20px;}
+#right { width:70%; padding:20px;}
+button { font-size:30px; padding:15px; margin:10px 0; width:100%; background:#2563eb; color:white; border:none; border-radius:10px;}
+.card { background:white; padding:20px; border-radius:15px; box-shadow:0 5px 20px rgba(0,0,0,0.1); margin-bottom:20px;}
+.value { font-size:30px;}
 </style>
 </head>
+
 <body>
-<div class="wrap">
-  <div class="left">
-    <div class="card">
-      <h1>Carbon Cure Controller</h1>
-      <div class="statusLine">
-        <div id="serialStatus" class="bigStatus disconnected">Disconnected</div>
-        <div id="runStatus" class="bigStatus stopped">Stopped</div>
-      </div>
-    </div>
 
-    <div class="card">
-      <h2>Connection</h2>
-      <div class="rowButtons">
-        <button id="connectBtn">Connect COM Port</button>
-        <button id="disconnectBtn" class="secondary">Disconnect</button>
-      </div>
-      <div style="height:10px"></div>
-      <div class="rowButtons">
-        <button id="reloadBtn" class="secondary">Reload from ESP32</button>
-        <button id="clearActualBtn" class="secondary">Clear Actual Trace</button>
-      </div>
-    </div>
+<div id="left">
+<div class="card">
+<button onclick="connect()">Connect</button>
+<button onclick="send('START')">Start</button>
+<button onclick="send('STOP')">Stop</button>
+</div>
 
-    <div class="card">
-      <h2>Profile</h2>
-      <div class="grid2">
-        <div>
-          <label for="profileName">Profile Name</label>
-          <input id="profileName" type="text" value="Carbon Cure Profile">
-        </div>
-        <div>
-          <label for="csvFile">Load CSV</label>
-          <input id="csvFile" type="file" accept=".csv">
-        </div>
-      </div>
+<div class="card">
+<div>Time: <span id="time" class="value">0</span></div>
+<div>Temp: <span id="temp" class="value">0</span></div>
+<div>Target: <span id="target" class="value">0</span></div>
+</div>
+</div>
 
-      <div style="height:12px"></div>
-
-      <div class="grid2">
-        <div>
-         <label for="xMaxMinutes">Graph Time Length (minutes)</label>
-<input id="xMaxMinutes" type="number" min="1" step="1" value="180">
-        </div>
-        <div>
-          <label for="yMaxTemp">Graph Max Temperature (°C)</label>
-          <input id="yMaxTemp" type="number" min="10" step="1" value="200">
-        </div>
-      </div>
-
-      <div style="height:12px"></div>
-
-      <div class="rowButtons">
-        <button id="applyAxesBtn" class="secondary">Apply Axes</button>
-        <button id="saveCsvBtn" class="secondary">Save CSV</button>
-      </div>
-
-      <div style="height:10px"></div>
-
-      <div class="rowButtons">
-        <button id="sendProfileBtn" class="green">Send Profile to ESP32</button>
-        <button id="startBtn" class="green">Start Run</button>
-      </div>
-
-      <div style="height:10px"></div>
-
-      <div class="rowButtons">
-        <button id="stopBtn" class="red">Stop Run</button>
-        <button id="resetProfileBtn" class="orange">Reset Profile</button>
-      </div>
-
-      <div style="height:10px"></div>
-      <div class="mini">Click on the top graph to add a point. Drag points to shape the ramp and soak cycle. During a run, editing is locked.</div>
-    </div>
-
-    <div class="card">
-      <h2>Control Tuning</h2>
-      <div class="grid2">
-        <div>
-          <label for="pidBandSlider">Proportional Start Band (°C below target)</label>
-          <input id="pidBandSlider" type="range" min="1" max="30" step="0.5" value="5">
-        </div>
-        <div class="sliderValue" id="pidBandValue">5.0 °C</div>
-      </div>
-
-      <div style="height:8px"></div>
-
-      <div class="grid2">
-        <div>
-          <label for="minDutySlider">Duty at Target (%)</label>
-          <input id="minDutySlider" type="range" min="0" max="60" step="1" value="20">
-        </div>
-        <div class="sliderValue" id="minDutyValue">20 %</div>
-      </div>
-
-      <div style="height:8px"></div>
-
-      <div class="grid2">
-        <div>
-          <label for="windowSlider">SSR Window (seconds)</label>
-          <input id="windowSlider" type="range" min="0.5" max="10" step="0.5" value="2">
-        </div>
-        <div class="sliderValue" id="windowValue">2.0 s</div>
-      </div>
-
-      <div style="height:10px"></div>
-
-      <div class="rowButtons">
-        <button id="sendTuningBtn" class="secondary">Send Tuning to ESP32</button>
-        <button id="requestStatusBtn" class="secondary">Request Status</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Live Values</h2>
-      <div class="grid2">
-        <div>
-          <label>Current Temperature</label>
-          <div class="valueBox" id="currentTempBox">--</div>
-        </div>
-        <div>
-          <label>Target Temperature</label>
-          <div class="valueBox" id="targetTempBox">--</div>
-        </div>
-      </div>
-      <div style="height:10px"></div>
-      <div class="grid2">
-        <div>
-          <label>Elapsed Time</label>
-          <div class="valueBox" id="elapsedBox">--</div>
-        </div>
-        <div>
-          <label>Duty / SSR</label>
-          <div class="valueBox" id="dutyBox">--</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Profile Points</h2>
-      <div class="tableWrap">
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Time (min)</th>
-              <th>Temperature (°C)</th>
-            </tr>
-          </thead>
-          <tbody id="profileTableBody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Serial Log</h2>
-      <textarea id="logBox" class="logBox" readonly></textarea>
-    </div>
-  </div>
-
-  <div class="right">
-    <div class="card">
-      <h2>Editable Ramp and Soak Profile</h2>
-      <canvas id="editorCanvas" width="1100" height="360"></canvas>
-      <div class="mini" style="margin-top:8px;">
-        Left click to add a point. Drag to move. Right click a point to remove it. First point always stays at time 0.
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Run Graph: Target vs Actual</h2>
-      <canvas id="runCanvas" width="1100" height="360"></canvas>
-      <div class="mini" style="margin-top:8px;">
-        Blue line = target profile. Red line = live measured temperature.
-      </div>
-    </div>
-  </div>
+<div id="right">
+<canvas id="chart"></canvas>
 </div>
 
 <script>
-const editorCanvas = document.getElementById("editorCanvas");
-const runCanvas = document.getElementById("runCanvas");
-const ectx = editorCanvas.getContext("2d");
-const rctx = runCanvas.getContext("2d");
+let port, reader, writer;
 
-const serialStatus = document.getElementById("serialStatus");
-const runStatus = document.getElementById("runStatus");
-const logBox = document.getElementById("logBox");
+let buffer = ""; // FIX: handles split serial packets
 
-const profileNameInput = document.getElementById("profileName");
-const xMaxMinutesInput = document.getElementById("xMaxMinutes");
-const pidBandSlider = document.getElementById("pidBandSlider");
-const minDutySlider = document.getElementById("minDutySlider");
-const windowSlider = document.getElementById("windowSlider");
+let expectedTime = [];
+let expectedTemp = [];
 
-const pidBandValue = document.getElementById("pidBandValue");
-const minDutyValue = document.getElementById("minDutyValue");
-const windowValue = document.getElementById("windowValue");
+let actualData = [];
 
-const currentTempBox = document.getElementById("currentTempBox");
-const targetTempBox = document.getElementById("targetTempBox");
-const elapsedBox = document.getElementById("elapsedBox");
-const dutyBox = document.getElementById("dutyBox");
-const profileTableBody = document.getElementById("profileTableBody");
+let receivingProfile = false;
+let profileReceived = false;
 
-const yMaxTempInput = document.getElementById("yMaxTemp");
+let lastChartUpdate = 0;
 
-let port = null;
-let reader = null;
-let writer = null;
-let readLoopActive = false;
-
-let connected = false;
-let runActive = false;
-let editLocked = false;
-
-let graphMaxSec = 180 * 60;
-let graphMaxTemp = 200;
-
-let profilePoints = [
-  { timeSec: 0, tempC: 20 },
-  { timeSec: 1800, tempC: 80 },
-  { timeSec: 3600, tempC: 80 },
-  { timeSec: 5400, tempC: 120 },
-  { timeSec: 7200, tempC: 120 }
-];
-
-let dragIndex = -1;
-let actualTrace = [];
-let latestTelemetry = {
-  elapsedSec: 0,
-  totalSec: 0,
-  currentTempC: 0,
-  targetTempC: 0,
-  dutyPercent: 0,
-  ssrOn: 0
-};
-
-function log(msg) {
-  const t = new Date().toLocaleTimeString();
-  logBox.value += "[" + t + "] " + msg + "\n";
-  logBox.scrollTop = logBox.scrollHeight;
-}
-
-function clamp(v, min, max) {
-  return Math.max(min, Math.min(max, v));
-}
-
-function sortProfile() {
-  profilePoints.sort((a, b) => a.timeSec - b.timeSec);
-}
-
-function ensureFirstPointAtZero() {
-  sortProfile();
-  if (profilePoints.length === 0) {
-    profilePoints.push({ timeSec: 0, tempC: 20 });
-  }
-  profilePoints[0].timeSec = 0;
-}
-
-function profileDurationSec() {
-  if (profilePoints.length === 0) return 0;
-  return profilePoints[profilePoints.length - 1].timeSec;
-}
-
-function updateProfileTable() {
-  profileTableBody.innerHTML = "";
-  profilePoints.forEach((p, i) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${i + 1}</td>
-      <td>${(p.timeSec / 60).toFixed(2)}</td>
-      <td>${p.tempC.toFixed(1)}</td>
-    `;
-    profileTableBody.appendChild(tr);
-  });
-}
-
-function updateSliderLabels() {
-  pidBandValue.textContent = Number(pidBandSlider.value).toFixed(1) + " °C";
-  minDutyValue.textContent = Number(minDutySlider.value).toFixed(0) + " %";
-  windowValue.textContent = Number(windowSlider.value).toFixed(1) + " s";
-}
-
-function setConnectedState(v) {
-  connected = v;
-  serialStatus.textContent = v ? "Connected" : "Disconnected";
-  serialStatus.className = "bigStatus " + (v ? "connected" : "disconnected");
-}
-
-function setRunState(v) {
-  runActive = v;
-  editLocked = v;
-  runStatus.textContent = v ? "Running" : "Stopped";
-  runStatus.className = "bigStatus " + (v ? "running" : "stopped");
-}
-
-function formatTime(sec) {
-  sec = Math.max(0, sec);
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${m}m ${s}s`;
-}
-
-function targetTempFromProfile(points, tSec) {
-  if (points.length === 0) return 0;
-  if (points.length === 1) return points[0].tempC;
-  if (tSec <= points[0].timeSec) return points[0].tempC;
-  if (tSec >= points[points.length - 1].timeSec) return points[points.length - 1].tempC;
-
-  for (let i = 0; i < points.length - 1; i++) {
-    const a = points[i];
-    const b = points[i + 1];
-    if (tSec >= a.timeSec && tSec <= b.timeSec) {
-      const span = b.timeSec - a.timeSec;
-      if (span <= 0) return b.tempC;
-      const f = (tSec - a.timeSec) / span;
-      return a.tempC + f * (b.tempC - a.tempC);
+const chart = new Chart(document.getElementById('chart'), {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [
+      { label:'Expected', data:[], borderWidth:2 },
+      { label:'Actual', data:[], borderWidth:2 }
+    ]
+  },
+  options: {
+    animation:false,
+    responsive:true,
+    scales: {
+      x: { title:{display:true,text:'Time (s)'} },
+      y: { title:{display:true,text:'Temp (°C)'}, min:0 }
     }
   }
-  return points[points.length - 1].tempC;
+});
+
+async function connect() {
+
+  port = await navigator.serial.requestPort();
+  await port.open({ baudRate: 9600 });
+
+  const decoder = new TextDecoderStream();
+  port.readable.pipeTo(decoder.writable);
+  reader = decoder.readable.getReader();
+
+  const encoder = new TextEncoderStream();
+  encoder.readable.pipeTo(port.writable);
+  writer = encoder.writable.getWriter();
+
+  readLoop();
+
+  // request profile after boot delay
+  setTimeout(() => send("PROFILE"), 3000);
 }
 
-function getMargins() {
-  return { left: 70, right: 24, top: 24, bottom: 44 };
-}
+async function readLoop() {
 
-function dataToCanvas(xSec, yTemp, canvas) {
-  const m = getMargins();
-  const w = canvas.width - m.left - m.right;
-  const h = canvas.height - m.top - m.bottom;
-  const x = m.left + (xSec / graphMaxSec) * w;
-  const y = m.top + h - (yTemp / graphMaxTemp) * h;
-  return { x, y };
-}
+  while (true) {
 
-function canvasToData(px, py, canvas) {
-  const m = getMargins();
-  const w = canvas.width - m.left - m.right;
-  const h = canvas.height - m.top - m.bottom;
-  const xSec = clamp((px - m.left) / w, 0, 1) * graphMaxSec;
-  const tempC = clamp((h - (py - m.top)) / h, 0, 1) * graphMaxTemp;
-  return { xSec, tempC };
-}
+    const { value, done } = await reader.read();
+    if (done) break;
 
-function drawAxes(ctx, canvas, title, xLabel, yLabel) {
-  const m = getMargins();
-  const w = canvas.width;
-  const h = canvas.height;
-  const plotW = w - m.left - m.right;
-  const plotH = h - m.top - m.bottom;
+    buffer += value;
 
-  ctx.clearRect(0, 0, w, h);
+    let lines = buffer.split("\n");
+    buffer = lines.pop(); // keep incomplete line
 
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, w, h);
-
-  ctx.strokeStyle = "#cbd5e1";
-  ctx.lineWidth = 1;
-
-  const xSteps = 10;
-  for (let i = 0; i <= xSteps; i++) {
-    const x = m.left + (i / xSteps) * plotW;
-    ctx.beginPath();
-    ctx.moveTo(x, m.top);
-    ctx.lineTo(x, h - m.bottom);
-    ctx.stroke();
-
-    const sec = (i / xSteps) * graphMaxSec;
-    ctx.fillStyle = "#475569";
-    ctx.font = "14px Helvetica";
-    ctx.textAlign = "center";
-    ctx.fillText((sec / 60).toFixed(0) + " min", x, h - 14);
-  }
-
-  const ySteps = 8;
-  for (let i = 0; i <= ySteps; i++) {
-    const y = m.top + (i / ySteps) * plotH;
-    ctx.beginPath();
-    ctx.moveTo(m.left, y);
-    ctx.lineTo(w - m.right, y);
-    ctx.stroke();
-
-    const temp = graphMaxTemp - (i / ySteps) * graphMaxTemp;
-    ctx.fillStyle = "#475569";
-    ctx.font = "14px Helvetica";
-    ctx.textAlign = "right";
-    ctx.fillText(temp.toFixed(0), m.left - 10, y + 5);
-  }
-
-  ctx.strokeStyle = "#0f172a";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(m.left, m.top);
-  ctx.lineTo(m.left, h - m.bottom);
-  ctx.lineTo(w - m.right, h - m.bottom);
-  ctx.stroke();
-
-  ctx.fillStyle = "#111827";
-  ctx.font = "bold 18px Helvetica";
-  ctx.textAlign = "left";
-  ctx.fillText(title, m.left, 18);
-
-  ctx.fillStyle = "#334155";
-  ctx.font = "15px Helvetica";
-  ctx.textAlign = "center";
-  ctx.fillText(xLabel, m.left + plotW / 2, h - 2);
-
-  ctx.save();
-  ctx.translate(18, m.top + plotH / 2);
-  ctx.rotate(-Math.PI / 2);
-  ctx.textAlign = "center";
-  ctx.fillText(yLabel, 0, 0);
-  ctx.restore();
-}
-
-function drawEditorGraph() {
-  drawAxes(ectx, editorCanvas, "Editable Profile", "Time", "Temperature (°C)");
-
-  if (profilePoints.length > 0) {
-    ectx.strokeStyle = "#2563eb";
-    ectx.lineWidth = 3;
-    ectx.beginPath();
-
-    profilePoints.forEach((p, i) => {
-      const c = dataToCanvas(p.timeSec, p.tempC, editorCanvas);
-      if (i === 0) ectx.moveTo(c.x, c.y);
-      else ectx.lineTo(c.x, c.y);
-    });
-
-    ectx.stroke();
-
-    profilePoints.forEach((p, i) => {
-      const c = dataToCanvas(p.timeSec, p.tempC, editorCanvas);
-      ectx.beginPath();
-      ectx.arc(c.x, c.y, 7, 0, Math.PI * 2);
-      ectx.fillStyle = editLocked ? "#94a3b8" : "#2563eb";
-      ectx.fill();
-      ectx.strokeStyle = "#ffffff";
-      ectx.lineWidth = 2;
-      ectx.stroke();
-
-      ectx.fillStyle = "#0f172a";
-      ectx.font = "13px Helvetica";
-      ectx.textAlign = "left";
-      ectx.fillText(`${(p.timeSec / 60).toFixed(1)} min, ${p.tempC.toFixed(1)}°C`, c.x + 10, c.y - 10);
-    });
+    for (let line of lines) processLine(line.trim());
   }
 }
 
-function drawRunGraph() {
-  drawAxes(rctx, runCanvas, "Run Graph", "Time", "Temperature (°C)");
+function processLine(line) {
 
-  if (profilePoints.length > 0) {
-    rctx.strokeStyle = "#2563eb";
-    rctx.lineWidth = 3;
-    rctx.beginPath();
-
-    profilePoints.forEach((p, i) => {
-      const c = dataToCanvas(p.timeSec, p.tempC, runCanvas);
-      if (i === 0) rctx.moveTo(c.x, c.y);
-      else rctx.lineTo(c.x, c.y);
-    });
-
-    rctx.stroke();
-  }
-
-  if (actualTrace.length > 0) {
-    rctx.strokeStyle = "#dc2626";
-    rctx.lineWidth = 3;
-    rctx.beginPath();
-    actualTrace.forEach((p, i) => {
-      const c = dataToCanvas(p.timeSec, p.tempC, runCanvas);
-      if (i === 0) rctx.moveTo(c.x, c.y);
-      else rctx.lineTo(c.x, c.y);
-    });
-    rctx.stroke();
-  }
-
-  if (runActive || actualTrace.length > 0) {
-    const t = latestTelemetry.elapsedSec || 0;
-    const tar = latestTelemetry.targetTempC || 0;
-    const cur = latestTelemetry.currentTempC || 0;
-
-    const targetPt = dataToCanvas(clamp(t, 0, graphMaxSec), tar, runCanvas);
-    const actualPt = dataToCanvas(clamp(t, 0, graphMaxSec), cur, runCanvas);
-
-    rctx.beginPath();
-    rctx.arc(targetPt.x, targetPt.y, 6, 0, Math.PI * 2);
-    rctx.fillStyle = "#2563eb";
-    rctx.fill();
-
-    rctx.beginPath();
-    rctx.arc(actualPt.x, actualPt.y, 6, 0, Math.PI * 2);
-    rctx.fillStyle = "#dc2626";
-    rctx.fill();
-  }
-}
-
-function redrawAll() {
-  drawEditorGraph();
-  drawRunGraph();
-  updateProfileTable();
-}
-
-function resizeCanvasesForDisplay() {
-  [editorCanvas, runCanvas].forEach(canvas => {
-    const rect = canvas.getBoundingClientRect();
-    const width = Math.max(800, Math.floor(rect.width));
-    const height = 360;
-    canvas.width = width;
-    canvas.height = height;
-  });
-  redrawAll();
-}
-
-function nearestPointIndex(canvas, mx, my, radius = 12) {
-  let best = -1;
-  let bestDist = radius;
-
-  profilePoints.forEach((p, i) => {
-    const c = dataToCanvas(p.timeSec, p.tempC, canvas);
-    const d = Math.hypot(mx - c.x, my - c.y);
-    if (d < bestDist) {
-      bestDist = d;
-      best = i;
-    }
-  });
-
-  return best;
-}
-
-editorCanvas.addEventListener("mousedown", (e) => {
-  if (editLocked) return;
-
-  const rect = editorCanvas.getBoundingClientRect();
-  const scaleX = editorCanvas.width / rect.width;
-  const scaleY = editorCanvas.height / rect.height;
-  const mx = (e.clientX - rect.left) * scaleX;
-  const my = (e.clientY - rect.top) * scaleY;
-
-  const idx = nearestPointIndex(editorCanvas, mx, my);
-  if (idx >= 0) {
-    dragIndex = idx;
+  if (line === "PROFILE_START") {
+    expectedTime = [];
+    expectedTemp = [];
+    actualData = [];
+    receivingProfile = true;
+    profileReceived = false;
     return;
   }
 
-  const d = canvasToData(mx, my, editorCanvas);
-  profilePoints.push({
-    timeSec: d.xSec,
-    tempC: d.tempC
-  });
-  ensureFirstPointAtZero();
-  redrawAll();
-});
+  if (line === "PROFILE_END") {
+    receivingProfile = false;
+    profileReceived = true;
 
-window.addEventListener("mousemove", (e) => {
-  if (dragIndex < 0 || editLocked) return;
+    chart.data.labels = expectedTime;
+    chart.data.datasets[0].data = expectedTemp;
+    chart.data.datasets[1].data = new Array(expectedTime.length).fill(null);
 
-  const rect = editorCanvas.getBoundingClientRect();
-  const scaleX = editorCanvas.width / rect.width;
-  const scaleY = editorCanvas.height / rect.height;
-  const mx = (e.clientX - rect.left) * scaleX;
-  const my = (e.clientY - rect.top) * scaleY;
-
-  const d = canvasToData(mx, my, editorCanvas);
-
-  profilePoints[dragIndex].tempC = d.tempC;
-
-  if (dragIndex === 0) {
-    profilePoints[dragIndex].timeSec = 0;
-  } else {
-    const prevTime = profilePoints[dragIndex - 1].timeSec + 1;
-    const nextTime = dragIndex < profilePoints.length - 1 ? profilePoints[dragIndex + 1].timeSec - 1 : graphMaxSec;
-    profilePoints[dragIndex].timeSec = clamp(d.xSec, prevTime, Math.max(prevTime, nextTime));
-  }
-
-  sortProfile();
-  ensureFirstPointAtZero();
-  redrawAll();
-});
-
-window.addEventListener("mouseup", () => {
-  dragIndex = -1;
-});
-
-editorCanvas.addEventListener("contextmenu", (e) => {
-  e.preventDefault();
-  if (editLocked) return;
-
-  const rect = editorCanvas.getBoundingClientRect();
-  const scaleX = editorCanvas.width / rect.width;
-  const scaleY = editorCanvas.height / rect.height;
-  const mx = (e.clientX - rect.left) * scaleX;
-  const my = (e.clientY - rect.top) * scaleY;
-
-  const idx = nearestPointIndex(editorCanvas, mx, my);
-  if (idx > 0) {
-    profilePoints.splice(idx, 1);
-    ensureFirstPointAtZero();
-    redrawAll();
-  }
-});
-
-async function connectSerial() {
-  if (!("serial" in navigator)) {
-    alert("This browser does not support Web Serial. Use Chrome or Edge.");
+    chart.update();
     return;
   }
 
-  try {
-    port = await navigator.serial.requestPort();
-    await port.open({ baudRate: 115200 });
+  let parts = line.split(",");
 
-    const encoder = new TextEncoder();
-    writer = port.writable.getWriter();
-
-    setConnectedState(true);
-    log("Serial connected");
-    startReadLoop();
-
-    await sendLine("PING");
-    await sendLine("GET_STATUS");
-    await sendLine("GET_PROFILE");
-    await sendLine("GET_SETTINGS");
-  } catch (err) {
-    log("Connect failed: " + err.message);
-    setConnectedState(false);
-  }
-}
-
-async function disconnectSerial() {
-  try {
-    readLoopActive = false;
-
-    if (reader) {
-      await reader.cancel();
-      reader.releaseLock();
-      reader = null;
-    }
-
-    if (writer) {
-      writer.releaseLock();
-      writer = null;
-    }
-
-    if (port) {
-      await port.close();
-      port = null;
-    }
-
-    setConnectedState(false);
-    setRunState(false);
-    log("Serial disconnected");
-  } catch (err) {
-    log("Disconnect error: " + err.message);
-  }
-}
-
-async function sendLine(line) {
-  if (!connected || !writer) {
-    log("Not connected");
-    return;
-  }
-  const encoder = new TextEncoder();
-  await writer.write(encoder.encode(line + "\n"));
-  log("TX: " + line);
-}
-
-async function startReadLoop() {
-  if (!port || !port.readable) return;
-  readLoopActive = true;
-  let buffer = "";
-
-  while (port.readable && readLoopActive) {
-    try {
-      reader = port.readable.getReader();
-      while (readLoopActive) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (value) {
-          buffer += new TextDecoder().decode(value);
-          let lines = buffer.split("\n");
-          buffer = lines.pop();
-          for (const raw of lines) {
-            const line = raw.trim();
-            if (line.length > 0) {
-              log("RX: " + line);
-              parseSerialLine(line);
-            }
-          }
-        }
-      }
-    } catch (err) {
-      log("Read loop ended: " + err.message);
-      break;
-    } finally {
-      if (reader) {
-        reader.releaseLock();
-        reader = null;
-      }
-    }
-  }
-
-  setConnectedState(false);
-}
-
-function parseSerialLine(line) {
-  const parts = line.split(",");
-
-  if (parts[0] === "OK") return;
-  if (parts[0] === "ERR") return;
-
-  if (parts[0] === "STATUS") {
-  setRunState(parts[1] === "1");
-
-  currentTempBox.textContent = Number(parts[5]).toFixed(1) + " °C";
-  targetTempBox.textContent = Number(parts[6]).toFixed(1) + " °C";
-  elapsedBox.textContent = formatTime(Number(parts[3]));
-  dutyBox.textContent = Number(parts[7]).toFixed(0) + " %";
-
-  redrawAll();   // 🔥 ADD THIS LINE
-
-  return;
-}
- 
-  if (parts[0] === "SETTINGS") {
-  const pid = Number(parts[1] || 5);
-  const duty = Number(parts[2] || 20);
-  const window = Number(parts[3] || 2);
-
-  // Update sliders
-  pidBandSlider.value = pid;
-  minDutySlider.value = duty;
-  windowSlider.value = window;
-
-  // Update labels
-  pidBandValue.textContent = pid.toFixed(1) + " °C";
-  minDutyValue.textContent = duty.toFixed(0) + " %";
-  windowValue.textContent = window.toFixed(1) + " s";
-
-  log("Settings updated from ESP32");
-
-  return;
-}
-
-  if (parts[0] === "PROFILE") {
-    if (parts.length >= 3) {
-      const incomingName = parts[1];
-      const count = Number(parts[2] || 0);
-      if (count > 0 && parts.length >= 3 + count * 2) {
-        const newPoints = [];
-        let idx = 3;
-        for (let i = 0; i < count; i++) {
-          const t = Number(parts[idx++]);
-          const y = Number(parts[idx++]);
-          newPoints.push({ timeSec: t, tempC: y });
-        }
-        profileNameInput.value = incomingName;
-        profilePoints = newPoints;
-        ensureFirstPointAtZero();
-
-        const duration = profileDurationSec();
-        if (duration > 0) {
-          graphMaxSec = Math.max(duration, graphMaxSec);
-          xMaxMinutesInput.value = (graphMaxSec / 60).toFixed(0);
-        }
-        redrawAll();
-      }
-    }
+  if (receivingProfile && parts[0] === "P") {
+    expectedTime.push(Number(parts[1]));
+    expectedTemp.push(Number(parts[2]));
     return;
   }
 
-  if (parts[0] === "TELEMETRY") {
-    latestTelemetry = {
-      elapsedSec: Number(parts[4] || 0),
-      totalSec: Number(parts[5] || 0),
-      currentTempC: Number(parts[6] || 0),
-      targetTempC: Number(parts[7] || 0),
-      dutyPercent: Number(parts[8] || 0),
-      ssrOn: Number(parts[9] || 0)
-    };
+  if (parts[0] === "D") {
 
-    setRunState(parts[2] === "1");
+    let t = Number(parts[1]);
+    let temp = Number(parts[2]);
+    let target = Number(parts[3]);
 
-    currentTempBox.textContent = latestTelemetry.currentTempC.toFixed(2) + " °C";
-    targetTempBox.textContent = latestTelemetry.targetTempC.toFixed(2) + " °C";
-    elapsedBox.textContent = formatTime(latestTelemetry.elapsedSec) + " / " + formatTime(latestTelemetry.totalSec);
-    dutyBox.textContent = latestTelemetry.dutyPercent.toFixed(1) + " % | " + (latestTelemetry.ssrOn ? "ON" : "OFF");
+    document.getElementById("time").innerText = t;
+    document.getElementById("temp").innerText = temp.toFixed(1);
+    document.getElementById("target").innerText = target.toFixed(1);
 
-    if (runActive) {
-      actualTrace.push({
-        timeSec: latestTelemetry.elapsedSec,
-        tempC: latestTelemetry.currentTempC
-      });
-
-      if (latestTelemetry.totalSec > graphMaxSec) {
-  graphMaxSec = latestTelemetry.totalSec;
-  xMaxMinutesInput.value = (graphMaxSec / 60).toFixed(0);
-}
+    if (t < chart.data.datasets[1].data.length) {
+      chart.data.datasets[1].data[t] = temp;
     }
 
-    drawRunGraph();
-    return;
+    // throttle chart updates (fix freeze)
+    if (millis() - lastChartUpdate > 300) {
+      chart.update();
+      lastChartUpdate = millis();
+    }
   }
 }
 
-function buildProfileCommand() {
-  ensureFirstPointAtZero();
-  sortProfile();
-  const name = profileNameInput.value.trim() || "Carbon Cure Profile";
-  let cmd = `PROFILE,${name},${profilePoints.length}`;
-  profilePoints.forEach(p => {
-    cmd += `,${p.timeSec.toFixed(2)},${p.tempC.toFixed(2)}`;
-  });
-  return cmd;
+function send(cmd) {
+  if (writer) writer.write(cmd + "\n");
 }
 
-function saveProfileCsv() {
-  ensureFirstPointAtZero();
-  const name = profileNameInput.value.trim() || "profile";
-  let csv = "profile_name," + name + "\n";
-  csv += "time_sec,temp_c\n";
-  profilePoints.forEach(p => {
-    csv += `${p.timeSec.toFixed(2)},${p.tempC.toFixed(2)}\n`;
-  });
-
-  const blob = new Blob([csv], { type: "text/csv" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = name.replace(/[^a-z0-9_\- ]/gi, "_") + ".csv";
-  a.click();
+// simple millis replacement
+function millis() {
+  return Date.now();
 }
-
-function loadProfileCsv(file) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    const text = reader.result;
-    const lines = text.split(/\r?\n/).map(v => v.trim()).filter(v => v.length > 0);
-
-    let name = "Imported Profile";
-    let startIndex = 0;
-
-    if (lines[0] && lines[0].startsWith("profile_name,")) {
-      name = lines[0].split(",").slice(1).join(",").trim() || name;
-      startIndex = 1;
-    }
-
-    if (lines[startIndex] && lines[startIndex].toLowerCase() === "time_sec,temp_c") {
-      startIndex++;
-    }
-
-    const newPoints = [];
-    for (let i = startIndex; i < lines.length; i++) {
-      const parts = lines[i].split(",");
-      if (parts.length >= 2) {
-        const t = Number(parts[0]);
-        const y = Number(parts[1]);
-        if (!Number.isNaN(t) && !Number.isNaN(y)) {
-          newPoints.push({ timeSec: t, tempC: y });
-        }
-      }
-    }
-
-    if (newPoints.length > 0) {
-      profileNameInput.value = name;
-      profilePoints = newPoints;
-      ensureFirstPointAtZero();
-
-      const dur = profileDurationSec();
-      graphMaxSec = Math.max(dur, 600);
-xMaxMinutesInput.value = (graphMaxSec / 60).toFixed(0);
-
-      let maxY = 50;
-      profilePoints.forEach(p => maxY = Math.max(maxY, p.tempC));
-      graphMaxTemp = Math.max(Math.ceil(maxY / 10) * 10 + 20, Number(yMaxTempInput.value));
-      yMaxTempInput.value = graphMaxTemp;
-
-      redrawAll();
-      log("CSV profile loaded");
-    }
-  };
-  reader.readAsText(file);
-}
-
-document.getElementById("connectBtn").addEventListener("click", connectSerial);
-document.getElementById("disconnectBtn").addEventListener("click", disconnectSerial);
-
-document.getElementById("applyAxesBtn").addEventListener("click", () => {
-  graphMaxSec = Math.max(60, Number(xMaxMinutesInput.value) * 60);
-  graphMaxTemp = Math.max(10, Number(document.getElementById("yMaxTemp").value));
-  redrawAll();
-});
-
-document.getElementById("connectBtn").addEventListener("click", connectSerial);
-
-document.getElementById("reloadBtn").addEventListener("click", async () => {
-  log("Reloading from ESP32...");
-  await sendLine("GET_SETTINGS");
-  await sendLine("GET_PROFILE");
-  await sendLine("GET_STATUS");
-});
-
-document.getElementById("clearActualBtn").addEventListener("click", () => {
-  actualTrace = [];
-  drawRunGraph();
-});
-
-document.getElementById("applyAxesBtn").addEventListener("click", () => {
-  graphMaxSec = Math.max(60, Number(xMaxMinutesInput.value) * 60);
-  graphMaxTemp = Math.max(10, Number(yMaxTempInput.value));
-  redrawAll();
-});
-
-document.getElementById("saveCsvBtn").addEventListener("click", saveProfileCsv);
-
-document.getElementById("csvFile").addEventListener("change", (e) => {
-  const file = e.target.files[0];
-  if (file) loadProfileCsv(file);
-});
-
-document.getElementById("sendProfileBtn").addEventListener("click", async () => {
-  const cmd = buildProfileCommand();
-  await sendLine(cmd);
-  await sendLine("GET_PROFILE");
-});
-
-document.getElementById("startBtn").addEventListener("click", async () => {
-  actualTrace = [];
-  drawRunGraph();
-  await sendLine("START");
-});
-
-document.getElementById("stopBtn").addEventListener("click", async () => {
-  await sendLine("STOP");
-});
-
-document.getElementById("resetProfileBtn").addEventListener("click", () => {
-  if (editLocked) return;
-  profilePoints = [
-    { timeSec: 0, tempC: 20 },
-    { timeSec: 1800, tempC: 80 },
-    { timeSec: 3600, tempC: 80 }
-  ];
-  ensureFirstPointAtZero();
-  redrawAll();
-});
-
-document.getElementById("applyAxesBtn").addEventListener("click", () => {
-  graphMaxSec = Math.max(
-    profileDurationSec(),
-    Number(xMaxMinutesInput.value) * 60
-  );
-
-  graphMaxTemp = Math.max(10, Number(yMaxTempInput.value));
-
-  redrawAll();
-});
-
-document.getElementById("sendTuningBtn").addEventListener("click", async () => {
-  await sendLine("SET_PID_BAND," + Number(pidBandSlider.value).toFixed(2));
-  await sendLine("SET_MIN_DUTY," + Number(minDutySlider.value).toFixed(2));
-  await sendLine("SET_WINDOW," + Number(windowSlider.value).toFixed(2));
-});
-
-document.getElementById("requestStatusBtn").addEventListener("click", async () => {
-  await sendLine("GET_STATUS");
-  await sendLine("GET_SETTINGS");
-});
-document.getElementById("applyAxesBtn").addEventListener("click", () => {
-  graphMaxSec = Math.max(60, Number(xMaxMinutesInput.value) * 60);
-  graphMaxTemp = Math.max(10, Number(yMaxTempInput.value));
-  redrawAll();
-});
-pidBandSlider.addEventListener("input", updateSliderLabels);
-minDutySlider.addEventListener("input", updateSliderLabels);
-windowSlider.addEventListener("input", updateSliderLabels);
-
-window.addEventListener("resize", resizeCanvasesForDisplay);
-
-updateSliderLabels();
-ensureFirstPointAtZero();
-resizeCanvasesForDisplay();
-redrawAll();
 </script>
 </body>
 </html>
