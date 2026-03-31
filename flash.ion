@@ -52,7 +52,8 @@ unsigned long runStartMs = 0;
 unsigned long lastTempReadMs = 0;
 unsigned long lastTelemetryMs = 0;
 unsigned long windowStartMs = 0;
-
+bool pendingSave = false;
+unsigned long saveTriggerTime = 0;
 float currentTempC = 0.0f;
 float targetTempC = 0.0f;
 float currentDutyPercent = 0.0f;
@@ -443,10 +444,16 @@ bool parseProfileCommand(String line) {
   }
 
   sortProfileByTime();
-  profileLoaded = true;
+profileLoaded = true;
 
-  sendCurrentProfile();
-  return true;
+
+// Also store as last used
+prefs.begin("curing", false);
+prefs.putInt("lastSlot", 0);
+prefs.end();
+
+sendCurrentProfile();
+return true;
 }
 
 bool parseSettingsCommand(String line) {
@@ -478,7 +485,9 @@ bool parseSettingsCommand(String line) {
 }
 
 void handleCommand(String line) {
-  line.trim();
+  line.replace("\r", "");
+line.replace("\n", "");
+line.trim();
 
   if (line == "START") {
     startRun();
@@ -493,12 +502,29 @@ void handleCommand(String line) {
   else if (line == "GET_SETTINGS") {
     sendSettings();
   }
+  else if (line == "GET_STATUS") {
+  Serial.print("STATUS,");
+  Serial.print(runActive ? 1 : 0); Serial.print(",");
+  Serial.print(currentProfile.name); Serial.print(",");
+  Serial.print(runActive ? (millis() - runStartMs) / 1000.0f : 0, 1); Serial.print(",");
+  Serial.print(getProfileDurationSec(), 1); Serial.print(",");
+  Serial.print(currentTempC, 2); Serial.print(",");
+  Serial.print(targetTempC, 2); Serial.print(",");
+  Serial.print(currentDutyPercent, 1); Serial.print(",");
+  Serial.println(ssrState ? 1 : 0);
+}
   else if (line == "LIST_PROFILES") {
     listProfilesInFlash();
   }
   else if (line.startsWith("PROFILE,")) {
-    parseProfileCommand(line);
+
+  if (parseProfileCommand(line)) {
+
+    // Small delay to allow serial buffer to clear
+    pendingSave = true;
+saveTriggerTime = millis();
   }
+}
   else if (line.startsWith("SETTINGS,")) {
     parseSettingsCommand(line);
   }
@@ -517,6 +543,9 @@ void handleCommand(String line) {
   else if (line == "CLEAR_ALL") {
     clearAllProfiles();
   }
+  else if (line == "PING") {
+  Serial.println("PONG");
+}
   else {
     Serial.println("ERROR,unknown_command");
   }
@@ -557,14 +586,25 @@ if (!profileLoaded) {
 void loop() {
   // Handle serial input
   while (Serial.available()) {
-    char c = Serial.read();
-    if (c == '\n') {
+  char c = Serial.read();
+
+  if (c == '\r') continue;
+
+  if (c == '\n') {
+    rxLine.replace("\r", "");
+    rxLine.trim();
+
+    if (rxLine.length() > 0) {
       handleCommand(rxLine);
-      rxLine = "";
-    } else if (c >= 32 && c <= 126) {
+    }
+
+    rxLine = "";
+  } else {
+    if (isPrintable(c)) {
       rxLine += c;
     }
   }
+}
 
   // Read temperature every 500ms
   if (millis() - lastTempReadMs > 500) {
@@ -586,9 +626,18 @@ void loop() {
     }
   }
 
-  // Send telemetry every 500ms
-  if (millis() - lastTelemetryMs > 500) {
-    lastTelemetryMs = millis();
-    sendTelemetry();
-  }
+  if (millis() - lastTelemetryMs > 1000) {
+  lastTelemetryMs = millis();
+  sendTelemetry();
+}
+// Non-blocking save
+if (pendingSave && millis() - saveTriggerTime > 200) {
+  pendingSave = false;
+
+  saveCurrentProfileToFlash(0);
+
+  prefs.begin("curing", false);
+  prefs.putInt("lastSlot", 0);
+  prefs.end();
+}
 }
