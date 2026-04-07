@@ -1,0 +1,164 @@
+function doGet(e) {
+
+// ===== SAFE ENTRY =====
+if (!e || !e.parameter) {
+return ContentService
+.createTextOutput("READY")
+.setMimeType(ContentService.MimeType.TEXT);
+}
+
+const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+const type = e.parameter.type || "";
+const device = e.parameter.device || "unknown";
+
+// ================= MASTER SHEET =================
+let master = ss.getSheetByName("Master");
+if (!master) {
+master = ss.insertSheet("Master");
+
+// HEADERS
+master.getRange("A1").setValue("Device");
+master.getRange("B1").setValue("Command");
+master.getRange("C1").setValue("Temp");
+master.getRange("D1").setValue("Finish Time");
+master.getRange("E1").setValue("Last Seen");
+}
+
+// ===== FIND OR CREATE DEVICE ROW =====
+let masterData = master.getRange("A2:A").getValues();
+let rowIndex = masterData.findIndex(r => r[0] === device);
+
+let row;
+if (rowIndex === -1) {
+row = master.getLastRow() + 1;
+master.getRange(row, 1).setValue(device);
+master.getRange(row, 2).setValue("STOP"); // default command
+} else {
+row = rowIndex + 2;
+}
+
+// ================= CONTROL =================
+if (type === "control") {
+
+let command = master.getRange(row, 2).getValue();
+
+return ContentService
+.createTextOutput(command)
+.setMimeType(ContentService.MimeType.TEXT);
+}
+
+// ================= LOGGING =================
+if (type === "log") {
+
+const csv = e.parameter.csv || "";
+const temp = e.parameter.temp || "";
+const timeLeft = e.parameter.timeleft || "";
+
+const props = PropertiesService.getScriptProperties();
+
+// ===== UPDATE MASTER =====
+master.getRange(row, 3).setValue(temp);
+
+let lastPacket = Utilities.formatDate(new Date(), "Pacific/Auckland", "dd/MM/yyyy HH:mm:ss");
+master.getRange(row, 5).setValue(lastPacket);
+
+// ===== FINISH TIME =====
+if (csv !== "" && timeLeft !== "" && !isNaN(parseInt(timeLeft))) {
+let now = new Date();
+let finishTime = new Date(now.getTime() + (parseInt(timeLeft) * 1000));
+let formattedFinish = Utilities.formatDate(finishTime, "Pacific/Auckland", "HH:mm:ss");
+
+master.getRange(row, 4).setValue(formattedFinish);
+} else {
+master.getRange(row, 4).setValue("Not Running");
+}
+
+// ===== TEMP ALERT =====
+let tempValue = parseFloat(temp);
+if (isNaN(tempValue)) tempValue = 0;
+
+let alertSent = props.getProperty(device + "_alert") === "true";
+
+if (tempValue > 150 && !alertSent) {
+try {
+MailApp.sendEmail({
+to: "d.c.gilmour@gmail.com",
+subject: "⚠️ OVEN HIGH TEMP WARNING",
+body:
+"Temperature exceeded 150°C\n\n" +
+"Temp: " + tempValue + "\n" +
+"Device: " + device
+});
+
+props.setProperty(device + "_alert", "true");
+} catch (err) {
+Logger.log(err);
+}
+}
+
+if (tempValue <= 150) {
+props.setProperty(device + "_alert", "false");
+}
+
+// ===== SKIP EMPTY CSV =====
+if (csv === "") {
+return ContentService
+.createTextOutput("NO_DATA")
+.setMimeType(ContentService.MimeType.TEXT);
+}
+
+// ================= DEVICE SHEET =================
+let sheetName = device;
+
+let sheet = ss.getSheetByName(sheetName);
+if (!sheet) {
+sheet = ss.insertSheet(sheetName);
+}
+
+// ===== STATE =====
+let running = props.getProperty(device + "_running") === "true";
+let currentCol = parseInt(props.getProperty(device + "_col") || "0");
+
+let controlState = master.getRange(row, 2).getValue();
+
+// ===== START NEW RUN =====
+if (controlState === "RUN" && !running) {
+
+currentCol = sheet.getLastColumn() + 1;
+if (currentCol < 1) currentCol = 1;
+
+let runName = Utilities.formatDate(new Date(), "Pacific/Auckland", "yyyy/MM/dd HH:mm:ss");
+sheet.getRange(1, currentCol).setValue(runName);
+
+props.setProperty(device + "_col", String(currentCol));
+props.setProperty(device + "_running", "true");
+}
+
+// ===== STOP =====
+if (controlState !== "RUN") {
+props.setProperty(device + "_running", "false");
+}
+
+// ===== SAFETY =====
+if (!currentCol || currentCol < 1) {
+currentCol = sheet.getLastColumn();
+}
+
+// ===== FIND NEXT ROW =====
+let colData = sheet.getRange(2, currentCol, sheet.getMaxRows()).getValues();
+let count = colData.filter(r => r[0] !== "").length;
+let writeRow = count + 2;
+
+// ===== WRITE CSV =====
+sheet.getRange(writeRow, currentCol).setValue(csv);
+
+return ContentService
+.createTextOutput("OK")
+.setMimeType(ContentService.MimeType.TEXT);
+}
+
+return ContentService
+.createTextOutput("INVALID")
+.setMimeType(ContentService.MimeType.TEXT);
+}
