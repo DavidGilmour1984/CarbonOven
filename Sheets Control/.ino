@@ -3,17 +3,17 @@
 #include <max6675.h>
 
 // ================= WIFI =================
-#define WIFI_SSID     "G2.4"
-#define WIFI_PASSWORD ""
+#define WIFI_SSID     "Smart"
+#define WIFI_PASSWORD "&"
 
-#define SCRIPT_URL ""
+#define SCRIPT_URL "enoVKnchQYQ66g/exec"
 #define DEVICE_ID "oven_2"
 
 // ================= SERIAL =================
 #define SERIAL_BAUD 9600
 
 // ================= PINS =================
-#define SSR_PIN          4
+#define SSR_PIN          2
 #define THERMO_SCK_PIN  18
 #define THERMO_CS_PIN    5
 #define THERMO_SO_PIN   19
@@ -27,9 +27,9 @@ int duration;
 };
 
 Step profile[] = {
-{35, 1200},
-{50, 1200},
-{50, 1200}
+{35, 120},
+{50, 120},
+{50, 120}
 };
 
 const int NUM_STEPS = sizeof(profile) / sizeof(profile[0]);
@@ -214,20 +214,33 @@ WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
 
 // ===== GET COMMAND =====
+static bool runLocked = false;
+static String lastCmd = "";
+
 String cmd = getCommand();
 
-if (cmd == "RUN" && !running) {
-running = true;
-startTime = millis();
-Serial.println("🔥 RUN STARTED");
+// ===== DETECT COMMAND CHANGE =====
+bool newCommand = (cmd != lastCmd);
+lastCmd = cmd;
+
+// ===== RUN =====
+if (cmd == "RUN" && !running && !runLocked && newCommand) {
+  running = true;
+  startTime = millis();
+  Serial.println("🔥 RUN STARTED");
 }
-else if (cmd == "STOP") {
-running = false;
-digitalWrite(SSR_PIN, LOW);
-Serial.println("🛑 STOPPED");
+
+// ===== STOP =====
+else if (cmd == "STOP" && newCommand) {
+  running = false;
+  runLocked = false;   // 🔓 unlock ONLY on new STOP command
+  digitalWrite(SSR_PIN, LOW);
+  Serial.println("🛑 STOPPED (UNLOCKED)");
 }
+
+// ===== IGNORE =====
 else {
-Serial.println("⚠️ INVALID CMD: " + cmd);
+  Serial.println("CMD: " + cmd);
 }
 
 // ===== CONTROL LOOP =====
@@ -247,10 +260,11 @@ Serial.println("CURRENT: " + String(currentTemp));
 Serial.println("TARGET: " + String(targetTemp));
 
 if (t / 1000 >= totalTime) {
-running = false;
-digitalWrite(SSR_PIN, LOW);
-Serial.println("✅ PROFILE COMPLETE");
-return;
+  running = false;
+  runLocked = true;  // 🔒 lock after completion
+  digitalWrite(SSR_PIN, LOW);
+  Serial.println("✅ PROFILE COMPLETE (LOCKED)");
+  return;
 }
 
 controlSSR(currentTemp, targetTemp);
