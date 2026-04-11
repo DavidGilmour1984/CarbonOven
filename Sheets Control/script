@@ -14,14 +14,14 @@ function doGet(e) {
 
   // ================= PROFILE (MATCH ESP32) =================
   const profile = [
-  { name: "Settle time", duration: 30 },
-  { name: "Ramp to 75°C", duration: 1800 },
-  { name: "Soak @75°C",   duration: 3600 },
-  { name: "Ramp to 125°C", duration: 1800 },
-  { name: "Soak @125°C",   duration: 3600 }
-];
+    { name: "Settle time", duration: 30 },
+    { name: "Ramp to 75°C - 30 min", duration: 1800 },
+    { name: "Soak @75°C - 1Hr",   duration: 3600 },
+    { name: "Ramp to 125°C - 30 min", duration: 1800 },
+    { name: "Soak @125°C - 1Hr",   duration: 3600 }
+  ];
 
-  // ================= STAGE FUNCTION (NEW) =================
+  // ================= STAGE FUNCTION =================
   function getStageName(timeSeconds) {
     let cumulative = 0;
     for (let i = 0; i < profile.length; i++) {
@@ -41,9 +41,10 @@ function doGet(e) {
     master.getRange("A1").setValue("Device");
     master.getRange("B1").setValue("Command");
     master.getRange("C1").setValue("Temp");
-    master.getRange("D1").setValue("Stage");        // UPDATED
-    master.getRange("E1").setValue("Finish Time");  // UPDATED
-    master.getRange("F1").setValue("Last Seen");    // UPDATED
+    master.getRange("D1").setValue("Target Temp"); // NEW
+    master.getRange("E1").setValue("Stage");       // SHIFTED
+    master.getRange("F1").setValue("Finish Time"); // SHIFTED
+    master.getRange("G1").setValue("Last Seen");   // SHIFTED
   }
 
   // ===== FIND OR CREATE DEVICE ROW =====
@@ -80,17 +81,24 @@ function doGet(e) {
     master.getRange(row, 3).setValue(temp);
 
     let lastPacket = Utilities.formatDate(new Date(), "Pacific/Auckland", "dd/MM/yyyy HH:mm:ss");
-    master.getRange(row, 6).setValue(lastPacket); // MOVED TO F
+    master.getRange(row, 7).setValue(lastPacket); // NOW G
 
-    // ===== STAGE CALCULATION =====
+    // ===== CSV PARSE =====
     let stageName = "";
+    let targetTemp = "";
+
     if (csv !== "") {
       let parts = csv.split(",");
       let timeVal = parseInt(parts[0], 10);
+
+      targetTemp = parts[2] || ""; // NEW
+
       stageName = getStageName(timeVal);
     }
 
-    master.getRange(row, 4).setValue(stageName); // STAGE IN D
+    // ===== WRITE NEW COLUMNS =====
+    master.getRange(row, 4).setValue(targetTemp); // D = Target
+    master.getRange(row, 5).setValue(stageName);  // E = Stage
 
     // ===== HIGH TEMP ALERT (UNCHANGED) =====
     let lastRow = master.getLastRow();
@@ -132,7 +140,7 @@ function doGet(e) {
       let finishTime = new Date(now.getTime() + (parseInt(timeLeft) * 1000));
       let formattedFinish = Utilities.formatDate(finishTime, "Pacific/Auckland", "HH:mm:ss");
 
-      master.getRange(row, 5).setValue(formattedFinish); // MOVED TO E
+      master.getRange(row, 6).setValue(formattedFinish); // NOW F
 
       if (parseInt(timeLeft) <= 0) {
         master.getRange(row, 2).setValue("STOP");
@@ -141,7 +149,7 @@ function doGet(e) {
 
     } else {
 
-      master.getRange(row, 5).setValue("Not Running"); // MOVED TO E
+      master.getRange(row, 6).setValue("Not Running"); // NOW F
       master.getRange(row, 2).setValue("STOP");
       Logger.log("AUTO STOP (NO DATA)");
     }
