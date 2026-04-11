@@ -12,6 +12,25 @@ function doGet(e) {
   const type = e.parameter.type || "";
   const device = e.parameter.device || "unknown";
 
+  // ================= PROFILE (MATCH ESP32) =================
+  const profile = [
+    { name: "Ramp 1", duration: 120 },
+    { name: "Ramp 2", duration: 120 },
+    { name: "Soak",   duration: 120 }
+  ];
+
+  // ================= STAGE FUNCTION (NEW) =================
+  function getStageName(timeSeconds) {
+    let cumulative = 0;
+    for (let i = 0; i < profile.length; i++) {
+      if (timeSeconds < cumulative + profile[i].duration) {
+        return profile[i].name;
+      }
+      cumulative += profile[i].duration;
+    }
+    return "Complete";
+  }
+
   // ================= MASTER SHEET =================
   let master = ss.getSheetByName("Master");
   if (!master) {
@@ -20,8 +39,9 @@ function doGet(e) {
     master.getRange("A1").setValue("Device");
     master.getRange("B1").setValue("Command");
     master.getRange("C1").setValue("Temp");
-    master.getRange("D1").setValue("Finish Time");
-    master.getRange("E1").setValue("Last Seen");
+    master.getRange("D1").setValue("Stage");        // UPDATED
+    master.getRange("E1").setValue("Finish Time");  // UPDATED
+    master.getRange("F1").setValue("Last Seen");    // UPDATED
   }
 
   // ===== FIND OR CREATE DEVICE ROW =====
@@ -58,63 +78,71 @@ function doGet(e) {
     master.getRange(row, 3).setValue(temp);
 
     let lastPacket = Utilities.formatDate(new Date(), "Pacific/Auckland", "dd/MM/yyyy HH:mm:ss");
-    master.getRange(row, 5).setValue(lastPacket);
-// ===== HIGH TEMP ALERT (GLOBAL) =====
-let lastRow = master.getLastRow();
-let temps = master.getRange(2, 3, lastRow - 1, 1)
-  .getValues()
-  .flat()
-  .map(v => parseFloat(v))
-  .filter(v => !isNaN(v));
+    master.getRange(row, 6).setValue(lastPacket); // MOVED TO F
 
-let maxTemp = temps.length ? Math.max(...temps) : 0;
+    // ===== STAGE CALCULATION =====
+    let stageName = "";
+    if (csv !== "") {
+      let parts = csv.split(",");
+      let timeVal = parseInt(parts[0], 10);
+      stageName = getStageName(timeVal);
+    }
 
-let lastAlert = parseInt(props.getProperty("lastHighTempEmail") || "0");
-let nowMs = Date.now();
+    master.getRange(row, 4).setValue(stageName); // STAGE IN D
 
-if (maxTemp > 150 && (nowMs - lastAlert > 60000)) {
+    // ===== HIGH TEMP ALERT (UNCHANGED) =====
+    let lastRow = master.getLastRow();
+    let temps = master.getRange(2, 3, lastRow - 1, 1)
+      .getValues()
+      .flat()
+      .map(v => parseFloat(v))
+      .filter(v => !isNaN(v));
 
-  try {
-    MailApp.sendEmail({
-      to: "d.c.gilmour@gmail.com",
-      subject: "🔥 HIGH TEMP ALERT",
-      body:
-        "One or more ovens exceeded 150°C\n\n" +
-        "Max Temp: " + maxTemp + "\n" +
-        "Time: " + Utilities.formatDate(new Date(), "Pacific/Auckland", "dd/MM/yyyy HH:mm:ss")
-    });
+    let maxTemp = temps.length ? Math.max(...temps) : 0;
 
-    props.setProperty("lastHighTempEmail", String(nowMs));
-    Logger.log("ALERT SENT");
+    let lastAlert = parseInt(props.getProperty("lastHighTempEmail") || "0");
+    let nowMs = Date.now();
 
-  } catch (err) {
-    Logger.log(err);
-  }
-}
+    if (maxTemp > 150 && (nowMs - lastAlert > 60000)) {
+
+      try {
+        MailApp.sendEmail({
+          to: "d.c.gilmour@gmail.com",
+          subject: "🔥 HIGH TEMP ALERT",
+          body:
+            "One or more ovens exceeded 150°C\n\n" +
+            "Max Temp: " + maxTemp + "\n" +
+            "Time: " + Utilities.formatDate(new Date(), "Pacific/Auckland", "dd/MM/yyyy HH:mm:ss")
+        });
+
+        props.setProperty("lastHighTempEmail", String(nowMs));
+        Logger.log("ALERT SENT");
+
+      } catch (err) {
+        Logger.log(err);
+      }
+    }
+
     // ===== FINISH TIME + AUTO STOP =====
-if (csv !== "" && timeLeft !== "" && !isNaN(parseInt(timeLeft))) {
+    if (csv !== "" && timeLeft !== "" && !isNaN(parseInt(timeLeft))) {
 
-  let now = new Date();
-  let finishTime = new Date(now.getTime() + (parseInt(timeLeft) * 1000));
-  let formattedFinish = Utilities.formatDate(finishTime, "Pacific/Auckland", "HH:mm:ss");
+      let now = new Date();
+      let finishTime = new Date(now.getTime() + (parseInt(timeLeft) * 1000));
+      let formattedFinish = Utilities.formatDate(finishTime, "Pacific/Auckland", "HH:mm:ss");
 
-  master.getRange(row, 4).setValue(formattedFinish);
+      master.getRange(row, 5).setValue(formattedFinish); // MOVED TO E
 
-  // 🔥 AUTO STOP WHEN FINISHED
-  if (parseInt(timeLeft) <= 0) {
-    master.getRange(row, 2).setValue("STOP");
-    Logger.log("AUTO STOP TRIGGERED");
-  }
+      if (parseInt(timeLeft) <= 0) {
+        master.getRange(row, 2).setValue("STOP");
+        Logger.log("AUTO STOP TRIGGERED");
+      }
 
-} else {
+    } else {
 
-  master.getRange(row, 4).setValue("Not Running");
-
-  // 🔥 ALSO FORCE STOP IF NO DATA (end of run)
-  master.getRange(row, 2).setValue("STOP");
-  Logger.log("AUTO STOP (NO DATA)");
-
-}
+      master.getRange(row, 5).setValue("Not Running"); // MOVED TO E
+      master.getRange(row, 2).setValue("STOP");
+      Logger.log("AUTO STOP (NO DATA)");
+    }
 
     // ===== SKIP EMPTY CSV =====
     if (csv === "") {
@@ -123,23 +151,18 @@ if (csv !== "" && timeLeft !== "" && !isNaN(parseInt(timeLeft))) {
         .setMimeType(ContentService.MimeType.TEXT);
     }
 
-    // ================= DEVICE SHEET =================
+    // ================= DEVICE SHEET (UNCHANGED) =================
     let sheet = ss.getSheetByName(device);
 
     if (!sheet) {
       sheet = ss.insertSheet(device);
-
-      // HARD RESET → ensures column A start
       sheet.clear();
       sheet.clearFormats();
       sheet.deleteColumns(2, sheet.getMaxColumns() - 1);
       sheet.insertColumns(2, 20);
-
-      // reset stored state
       props.deleteProperty(device + "_col");
     }
 
-    // ===== FIND LAST USED COLUMN (ROW 1 ONLY) =====
     let headers = sheet.getRange(1, 1, 1, sheet.getMaxColumns()).getValues()[0];
 
     let lastUsedCol = 0;
@@ -150,48 +173,36 @@ if (csv !== "" && timeLeft !== "" && !isNaN(parseInt(timeLeft))) {
       }
     }
 
-    // ===== CURRENT COLUMN =====
     let currentCol = parseInt(props.getProperty(device + "_col") || "0");
 
-    // ===== DETECT NEW RUN FROM CSV =====
-let parts = csv.split(",");
-let timeVal = parseInt(parts[0], 10);
+    let parts = csv.split(",");
+    let timeVal = parseInt(parts[0], 10);
 
-// ===== GET LAST TIME VALUE =====
-let lastTime = parseInt(props.getProperty(device + "_lastTime") || "-1");
+    let lastTime = parseInt(props.getProperty(device + "_lastTime") || "-1");
 
-// ===== DETECT NEW RUN =====
-// new run if time resets OR goes backwards OR first ever packet
-if (!isNaN(timeVal) && (timeVal < lastTime || lastTime === -1)) {
+    if (!isNaN(timeVal) && (timeVal < lastTime || lastTime === -1)) {
+      currentCol = lastUsedCol + 1;
+      if (currentCol < 1) currentCol = 1;
+      props.setProperty(device + "_col", String(currentCol));
+    }
 
-  currentCol = lastUsedCol + 1;
-  if (currentCol < 1) currentCol = 1;
+    props.setProperty(device + "_lastTime", String(timeVal));
 
-  props.setProperty(device + "_col", String(currentCol));
-}
-
-// save time for next comparison
-props.setProperty(device + "_lastTime", String(timeVal));
-
-    // ===== SAFETY =====
     if (!currentCol || currentCol < 1) {
       currentCol = 1;
       props.setProperty(device + "_col", "1");
     }
 
-    // ===== FORCE HEADER =====
     let header = sheet.getRange(1, currentCol).getValue();
     if (!header || header === "") {
       let runName = Utilities.formatDate(new Date(), "Pacific/Auckland", "yyyy/MM/dd HH:mm:ss");
       sheet.getRange(1, currentCol).setValue(runName);
     }
 
-    // ===== FIND NEXT ROW =====
     let colData = sheet.getRange(2, currentCol, sheet.getMaxRows()).getValues();
     let count = colData.filter(r => r[0] !== "").length;
     let writeRow = count + 2;
 
-    // ===== WRITE CSV =====
     sheet.getRange(writeRow, currentCol).setValue(csv);
 
     return ContentService
@@ -203,6 +214,7 @@ props.setProperty(device + "_lastTime", String(timeVal));
     .createTextOutput("INVALID")
     .setMimeType(ContentService.MimeType.TEXT);
 }
+
 function testEmail() {
   MailApp.sendEmail("d.c.gilmour@gmail.com", "TEST", "If you see this, email works");
 }
