@@ -6,7 +6,8 @@
 #define WIFI_SSID     "G2.4"
 #define WIFI_PASSWORD ""
 
-#define SCRIPT_URL "https://script.google.com/
+#define SCRIPT_URL "https://script.google.com/macrosAVtVT3enoVKnchQYQ66g/exec"
+#define DEVICE_ID "oven_1"
 
 // ================= SERIAL =================
 #define SERIAL_BAUD 9600
@@ -28,9 +29,11 @@ struct Step {
 };
 
 Step profile[] = {
-  {35, 120},
-  {50, 120},
-  {50, 120}
+  {20, 30},  // Settle time (20))
+  {75, 1800},  // Ramp to 75°C (30 min)
+  {75, 3600},  // Soak at 75°C (60 min)
+  {125, 1800}, // Ramp to 125°C (30 min)
+  {125, 3600}  // Soak at 125°C (60 min)
 };
 
 const int NUM_STEPS = sizeof(profile) / sizeof(profile[0]);
