@@ -6,8 +6,8 @@
 #define WIFI_SSID     "G2.4"
 #define WIFI_PASSWORD ""
 
-#define SCRIPT_URL "https://script.google.com/macrosAVtVT3enoVKnchQYQ66g/exec"
-#define DEVICE_ID "oven_1"
+#define SCRIPT_URL "https://script.googlAVtVT3enoVKnchQYQ66g/exec"
+#define DEVICE_ID "oven_2"
 
 // ================= SERIAL =================
 #define SERIAL_BAUD 9600
