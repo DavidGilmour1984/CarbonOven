@@ -14,8 +14,8 @@ function doGet(e) {
 
   // ================= SECURITY CONFIG =================
   const DEVICE_KEYS = {
-    "oven_1": "u2DTMufqSvkij72zo6uCY4dSemA3UPdgxngLauKrh5HYfSECP5CB6zkrB9Zi",
-    "oven_2": "ruxhKA97n9eXzvLYJJZDoHnxcvuXqgaa7H92fd4RAdJQqTheN3q52FmDVjYZ",
+    "oven_1": "",
+    "oven_2": "",
     "oven_3": "KEY_3_GHI",
     "oven_4": "KEY_4_JKL",
     "oven_5": "KEY_5_MNO",
@@ -24,7 +24,7 @@ function doGet(e) {
     "oven_8": "KEY_8_VWX"
   };
 
-  const SECRET = "6YGbkpqMQj8zAav9hkmMMb4rGSAoJazG75aXrh3mrpZhhVS9XXZ8rysfUajp";
+  const SECRET = "";
 
   function createHMAC(message) {
     const raw = Utilities.computeHmacSha256Signature(message, SECRET);
