@@ -1,3 +1,4 @@
+  const SECRET = "";
 function doGet(e) {
 
   // ===== SAFE ENTRY =====
@@ -32,35 +33,99 @@ function doGet(e) {
   }
  
   // ================= PROFILE =================
-  const profile = [
-    { name: "Settle time", duration: 30 },
-    { name: "Ramp to 75°C", duration: 1800 },
-    { name: "Soak at 75°C", duration: 3600 },
-    { name: "Ramp to 125°C", duration: 1800 },
-    { name: "Soak at 125°C", duration: 3600 }
-  ];
- 
-  function getStageName(timeSeconds) {
-    let cumulative = 0;
-    for (let i = 0; i < profile.length; i++) {
-      if (timeSeconds < cumulative + profile[i].duration) {
-        return profile[i].name;
-      }
-      cumulative += profile[i].duration;
-    }
-    return "Complete";
-  }
+  // NOTE: Profile is now fetched from ESP32 with each log entry
+  // These functions are kept as fallbacks only (should rarely be needed)
  
   function getStageTimeRemaining(timeSeconds) {
-    let cumulative = 0;
-    for (let i = 0; i < profile.length; i++) {
-      let stageEnd = cumulative + profile[i].duration;
-      if (timeSeconds < stageEnd) {
-        return Math.round((stageEnd - timeSeconds) / 60);
-      }
-      cumulative += profile[i].duration;
-    }
+    // Fallback: if for some reason we don't have the stage from ESP32,
+    // we can't calculate this accurately without the full profile.
+    // Return 0 to indicate unknown.
     return 0;
+  }
+ 
+  // ================= SETTINGS =================
+  if (type === "settings") {
+    
+    const key = e.parameter.key || "";
+    
+    // ===== DEVICE WHITELIST =====
+    if (!DEVICE_KEYS[device] || DEVICE_KEYS[device] !== key) {
+      return ContentService.createTextOutput("DENIED");
+    }
+    
+    let settingsSheet = ss.getSheetByName("Controller Settings");
+    if (!settingsSheet) {
+      return ContentService.createTextOutput("SETTINGS_SHEET_NOT_FOUND");
+    }
+    
+    // Read the data
+    let data = settingsSheet.getRange("A1:O10").getValues();
+    
+    // Extract profile (Temperature, Time, Stage Name columns)
+    let profileArray = [];
+    for (let row = 1; row < data.length; row++) { // Skip header
+      let temp = data[row][0];  // Column A
+      let time = data[row][1];  // Column B
+      let stageName = data[row][2]; // Column C
+      
+      if (temp === "" || time === "") break; // Stop at first empty row
+      
+      profileArray.push({
+        "temp": parseFloat(temp),
+        "duration": parseInt(time),
+        "stageName": String(stageName)
+      });
+    }
+    
+    // Extract duty cycles (T1-T6 pairs)
+    let dutyCyclesArray = [];
+    
+    // Find where the duty cycle data starts (after Stage Name, should be column D onwards)
+    // Format: T1, DC1, T2, DC2, T3, DC3, T4, DC4, T5, DC5, T6, DC6
+    // This means columns D-O in the header row
+    let headers = data[0]; // Header row
+    
+    for (let col = 3; col < headers.length; col += 2) { // Start at D (index 3), step by 2
+      let tempThreshold = data[1][col];  // First data row for T1, T2, etc
+      let dutyCycle = data[1][col + 1];  // First data row for DC1, DC2, etc
+      
+      if (tempThreshold === "" || dutyCycle === "") break;
+      
+      dutyCyclesArray.push({
+        "tempDelta": parseFloat(tempThreshold),
+        "dutyCycle": parseFloat(dutyCycle)
+      });
+    }
+    
+    // Sort duty cycles by tempDelta in descending order
+    dutyCyclesArray.sort((a, b) => b.tempDelta - a.tempDelta);
+    
+    let response = {
+      "profile": profileArray,
+      "dutyCycles": dutyCyclesArray
+    };
+    
+    // Update the "Last Flash Update" timestamp for this device in the sheet
+    // Read the full range to find the device
+    let fullData = settingsSheet.getRange("A10:B30").getValues();
+    
+    let lastFlashRow = 0;
+    for (let i = 0; i < fullData.length; i++) {
+      if (fullData[i][0] === device) {
+        lastFlashRow = i + 10; // A10 is row 10, so add i to get actual row
+        break;
+      }
+    }
+    
+    if (lastFlashRow > 0) {
+      let now = new Date();
+      let timestamp = Utilities.formatDate(now, "Pacific/Auckland", "dd/MM/yyyy HH:mm:ss");
+      settingsSheet.getRange(lastFlashRow + 1, 2).setValue(timestamp); // Column B for timestamp
+    }
+    
+    return ContentService
+      .createTextOutput(JSON.stringify(response))
+      .setMimeType(ContentService.MimeType.JSON);
   }
  
   // ================= MASTER =================
@@ -130,6 +195,7 @@ function doGet(e) {
     const csv = e.parameter.csv || "";
     const temp = e.parameter.temp || "";
     const timeLeft = e.parameter.timeleft || "";
+    const stageName = e.parameter.stageName || "";
  
     const key = e.parameter.key || "";
     const sig = e.parameter.sig || "";
@@ -161,21 +227,22 @@ function doGet(e) {
     let lastPacket = Utilities.formatDate(new Date(), "Pacific/Auckland", "dd/MM/yyyy HH:mm:ss");
     master.getRange(row, 8).setValue(lastPacket);
  
-    let stageName = "";
+    let stageNameOutput = stageName || "";  // Use ESP32's stage name directly
     let targetTemp = "";
-    let stageTimeLeft = "";
+    let stageTimeLeft = 0;
  
     if (csv !== "") {
       let parts = csv.split(",");
-      let timeVal = parseInt(parts[0], 10);
- 
       targetTemp = parts[2] || "";
-      stageName = getStageName(timeVal);
-      stageTimeLeft = getStageTimeRemaining(timeVal);
+    }
+    
+    // Convert timeLeft from seconds to minutes for display
+    if (timeLeft !== "") {
+      stageTimeLeft = Math.round(parseInt(timeLeft) / 60);
     }
  
     master.getRange(row, 4).setValue(targetTemp);
-    master.getRange(row, 5).setValue(stageName);
+    master.getRange(row, 5).setValue(stageNameOutput);
     master.getRange(row, 6).setValue(stageTimeLeft);
  
     // ===== HIGH TEMP ALERT (UNCHANGED) =====
@@ -212,6 +279,9 @@ function doGet(e) {
       }
  
     } else {
+      // Element is off - clear Stage and Stage Finish cells
+      master.getRange(row, 5).setValue("");  // Clear Stage
+      master.getRange(row, 6).setValue("");  // Clear Stage Finish (min)
       master.getRange(row, 7).setValue("Element Off");
       master.getRange(row, 2).setValue("STOP");
     }
