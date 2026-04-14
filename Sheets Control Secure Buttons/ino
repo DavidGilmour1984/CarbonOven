@@ -26,8 +26,8 @@ String SECRET  = ""; //keep the same
 #define SERIAL_BAUD 9600
  
 // ================= PINS =================
-#define INDICATOR_PIN   2
-#define SSR_PIN         4
+#define INDICATOR_PIN   2      //change to 25 for production board
+#define SSR_PIN         4      //change to 26 for production board
  
 #define THERMO_SCK_PIN  18
 #define THERMO_CS_PIN    5
@@ -713,7 +713,7 @@ void loop() {
     lastRemoteCmd = cmd;
  
     if (cmd == "RUN") {
-      if (!running && !runLocked && newCommand) {
+  if (!running && newCommand) {
         // Start new run
         running = true;
         startTime = millis();
@@ -753,12 +753,29 @@ void loop() {
     Serial.println("TARGET: " + String(targetTemp));
  
     if (t / 1000 >= totalTime) {
-      running = false;
-      runLocked = true;
-      setOutputs(false);
-      Serial.println("✅ PROFILE COMPLETE (LOCKED)");
-      return;
-    }
+  static int finishSendCount = 0;
+
+  float finalTemp = thermocouple.readCelsius();
+  float finalTarget = profile[NUM_STEPS - 1].temp;
+
+  setOutputs(false);
+  running = false;
+  runLocked = false;
+  currentStageName = "Complete";
+
+  String finalCsv = String(totalTime) + "," +
+                    String(finalTemp) + "," +
+                    String(finalTarget);
+
+  // Send final packet multiple times to guarantee delivery
+  if (finishSendCount < 5) {
+    sendData(finalCsv, finalTemp, 0);
+    finishSendCount++;
+  }
+
+  Serial.println("✅ PROFILE COMPLETE");
+  return;
+}
  
     controlSSR(currentTemp, targetTemp);
   }
