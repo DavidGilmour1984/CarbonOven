@@ -321,7 +321,7 @@ float getDutyCycle(float currentTemp, float targetTemp) {
   // Find the appropriate duty cycle band
   // Bands should be sorted by tempDelta (descending, from most positive to most negative)
   for (int i = 0; i < NUM_DC_BANDS; i++) {
-    if (error >= dutyCycleBands[i].tempDelta) {
+    if (error <= dutyCycleBands[i].tempDelta) {
       return dutyCycleBands[i].dutyCycle / 100.0; // Convert % to decimal
     }
   }
