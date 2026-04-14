@@ -112,7 +112,7 @@ function doGet(e) {
     let lastFlashRow = 0;
     for (let i = 0; i < fullData.length; i++) {
       if (fullData[i][0] === device) {
-        lastFlashRow = i + 10; // A10 is row 10, so add i to get actual row
+        lastFlashRow = i + 10;  // i=0 is row 10, i=1 is row 11, etc.
         break;
       }
     }
@@ -120,7 +120,7 @@ function doGet(e) {
     if (lastFlashRow > 0) {
       let now = new Date();
       let timestamp = Utilities.formatDate(now, "Pacific/Auckland", "dd/MM/yyyy HH:mm:ss");
-      settingsSheet.getRange(lastFlashRow + 1, 2).setValue(timestamp); // Column B for timestamp
+      settingsSheet.getRange(lastFlashRow, 2).setValue(timestamp); // Column B (row 10, 11, 12, etc.)
     }
     
     return ContentService
@@ -233,12 +233,12 @@ function doGet(e) {
  
     if (csv !== "") {
       let parts = csv.split(",");
+      let elapsedSeconds = parseInt(parts[0], 10);
       targetTemp = parts[2] || "";
-    }
-    
-    // Convert timeLeft from seconds to minutes for display
-    if (timeLeft !== "") {
-      stageTimeLeft = Math.round(parseInt(timeLeft) / 60);
+      
+      // Calculate time remaining in the current stage
+      // We need to find which stage we're in and how much time is left in that stage
+      stageTimeLeft = calculateStageTimeRemaining(elapsedSeconds, stageName);
     }
  
     master.getRange(row, 4).setValue(targetTemp);
@@ -344,7 +344,49 @@ function doGet(e) {
  
     return ContentService.createTextOutput("OK");
   }
+  
+  // ===== HELPER: Calculate time remaining in current stage =====
+  function calculateStageTimeRemaining(elapsedSeconds, currentStageName) {
+    // Get the profile from Controller Settings
+    let settingsSheet = ss.getSheetByName("Controller Settings");
+    if (!settingsSheet) {
+      return 0;
+    }
+    
+    let data = settingsSheet.getRange("A1:C10").getValues();
+    
+    // Build profile array from sheet
+    let profileData = [];
+    for (let row = 1; row < data.length; row++) {
+      let temp = data[row][0];
+      let time = data[row][1];
+      let stageName = data[row][2];
+      
+      if (temp === "" || time === "") break;
+      
+      profileData.push({
+        "duration": parseInt(time),
+        "stageName": String(stageName)
+      });
+    }
+    
+    // Find which stage we're in based on elapsed time
+    let cumulative = 0;
+    for (let i = 0; i < profileData.length; i++) {
+      let stageEnd = cumulative + profileData[i].duration;
+      
+      if (elapsedSeconds < stageEnd) {
+        // We're in this stage
+        let timeInStage = elapsedSeconds - cumulative;
+        let timeRemainingInStage = profileData[i].duration - timeInStage;
+        return Math.round(timeRemainingInStage / 60);  // Convert to minutes
+      }
+      
+      cumulative = stageEnd;
+    }
+    
+    return 0;  // Profile complete
+  }
  
   return ContentService.createTextOutput("INVALID");
 }
- 
