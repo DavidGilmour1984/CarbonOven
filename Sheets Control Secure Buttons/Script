@@ -241,9 +241,26 @@ function doGet(e) {
       stageTimeLeft = calculateStageTimeRemaining(elapsedSeconds, stageName);
     }
  
-    master.getRange(row, 4).setValue(targetTemp);
-    master.getRange(row, 5).setValue(stageNameOutput);
-    master.getRange(row, 6).setValue(stageTimeLeft);
+    let commandState = master.getRange(row, 2).getValue();
+
+if (
+  commandState === "RUN" &&
+  csv !== "" &&
+  timeLeft !== "" &&
+  !isNaN(parseInt(timeLeft))
+) {
+
+  master.getRange(row, 4).setValue(targetTemp);
+  master.getRange(row, 5).setValue(stageNameOutput);
+  master.getRange(row, 6).setValue(stageTimeLeft);
+
+} else {
+
+  master.getRange(row, 4).setValue("");
+  master.getRange(row, 5).setValue("");
+  master.getRange(row, 6).setValue("");
+
+}
  
     // ===== HIGH TEMP ALERT (UNCHANGED) =====
     let lastRow = master.getLastRow();
@@ -279,12 +296,10 @@ function doGet(e) {
       }
  
     } else {
-      // Element is off - clear Stage and Stage Finish cells
-      master.getRange(row, 5).setValue("");  // Clear Stage
-      master.getRange(row, 6).setValue("");  // Clear Stage Finish (min)
-      master.getRange(row, 7).setValue("Element Off");
-      master.getRange(row, 2).setValue("STOP");
-    }
+  master.getRange(row, 5).setValue("");
+  master.getRange(row, 6).setValue("");
+  master.getRange(row, 7).setValue("Element Off");
+}
  
     if (csv === "") {
       return ContentService.createTextOutput("NO_DATA");
