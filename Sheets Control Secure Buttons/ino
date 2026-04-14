@@ -3,6 +3,8 @@
 #include <max6675.h>
 #include <WiFiClientSecure.h>
 #include <time.h>
+#include <SPIFFS.h>
+#include <ArduinoJson.h>
 #include "mbedtls/md.h"
 
 #define RUN_BUTTON_PIN   16
@@ -14,7 +16,7 @@
 
 // ================= SCRIPT =================
 #define SCRIPT_URL "https://script.google.com/macros/s/AKfycbwfbBBiYX8Zja1W6BHC4lEwvNKXgq-bvKIUp_X2Ix2JB1eDEOAVtVT3enoVKnchQYQ66g/exec"
-#define DEVICE_ID "oven_2"
+#define DEVICE_ID "oven_1"
 
 // ================= SECURITY =================
 String API_KEY = ""; //change for each oven
@@ -43,22 +45,28 @@ const int DAYLIGHT_OFFSET_SEC = 0;
 // ================= OBJECTS =================
 MAX6675 thermocouple(THERMO_SCK_PIN, THERMO_CS_PIN, THERMO_SO_PIN);
 WiFiClientSecure secureClient;
- 
-// ================= PROFILE =================
+
+// ================= PROFILE STRUCTURE =================
 struct Step {
   float temp;
   int duration;
+  char stageName[64];  // Stage name
 };
- 
-Step profile[] = {
-  {20, 30},
-  {75, 1800},
-  {75, 3600},
-  {125, 1800},
-  {125, 3600}
+
+struct DutyCycleBand {
+  float tempDelta;  // Temperature difference from target (e.g., -6, -4, -2, 0, 1, 2)
+  float dutyCycle;  // Duty cycle percentage (e.g., 100, 80, 40, 20, 10, 0)
 };
- 
-const int NUM_STEPS = sizeof(profile) / sizeof(profile[0]);
+
+Step profile[8];  // Max 8 steps
+DutyCycleBand dutyCycleBands[12];  // Max 12 bands (T1-T6 pairs)
+
+int NUM_STEPS = 0;
+int NUM_DC_BANDS = 0;
+
+// Current stage tracking
+int currentStepIndex = 0;
+String currentStageName = "";
  
 bool running = false;
 unsigned long startTime = 0;
@@ -76,6 +84,113 @@ bool lastStopButtonState = HIGH;
 bool runLocked = false;
 String lastRemoteCmd = "";
 bool wifiConnected = false;
+
+// ================= SPIFFS / FLASH STORAGE =================
+#define CONFIG_FILE "/config.json"
+
+void initSPIFFS() {
+  if (!SPIFFS.begin(true)) {
+    Serial.println("❌ SPIFFS Mount Failed");
+    return;
+  }
+  Serial.println("✅ SPIFFS Mounted");
+}
+
+void saveConfigToFlash() {
+  DynamicJsonDocument doc(4096);
+  
+  JsonArray stepsArray = doc.createNestedArray("profile");
+  for (int i = 0; i < NUM_STEPS; i++) {
+    JsonObject step = stepsArray.createNestedObject();
+    step["temp"] = profile[i].temp;
+    step["duration"] = profile[i].duration;
+    step["stageName"] = profile[i].stageName;
+  }
+  
+  JsonArray bandsArray = doc.createNestedArray("dutyCycles");
+  for (int i = 0; i < NUM_DC_BANDS; i++) {
+    JsonObject band = bandsArray.createNestedObject();
+    band["tempDelta"] = dutyCycleBands[i].tempDelta;
+    band["dutyCycle"] = dutyCycleBands[i].dutyCycle;
+  }
+  
+  File configFile = SPIFFS.open(CONFIG_FILE, "w");
+  if (!configFile) {
+    Serial.println("❌ Failed to open config file for writing");
+    return;
+  }
+  
+  serializeJson(doc, configFile);
+  configFile.close();
+  
+  Serial.println("✅ Config saved to flash");
+}
+
+bool loadConfigFromFlash() {
+  if (!SPIFFS.exists(CONFIG_FILE)) {
+    Serial.println("⚠️ Config file not found on flash");
+    return false;
+  }
+  
+  File configFile = SPIFFS.open(CONFIG_FILE, "r");
+  if (!configFile) {
+    Serial.println("❌ Failed to open config file");
+    return false;
+  }
+  
+  DynamicJsonDocument doc(4096);
+  DeserializationError error = deserializeJson(doc, configFile);
+  configFile.close();
+  
+  if (error) {
+    Serial.println("❌ Failed to parse config JSON");
+    return false;
+  }
+  
+  // Load profile
+  JsonArray stepsArray = doc["profile"];
+  NUM_STEPS = stepsArray.size();
+  if (NUM_STEPS > 8) NUM_STEPS = 8;
+  
+  for (int i = 0; i < NUM_STEPS; i++) {
+    profile[i].temp = stepsArray[i]["temp"];
+    profile[i].duration = stepsArray[i]["duration"];
+    strncpy(profile[i].stageName, stepsArray[i]["stageName"].as<const char*>(), 63);
+    profile[i].stageName[63] = '\0';
+  }
+  
+  // Load duty cycles
+  JsonArray bandsArray = doc["dutyCycles"];
+  NUM_DC_BANDS = bandsArray.size();
+  if (NUM_DC_BANDS > 12) NUM_DC_BANDS = 12;
+  
+  for (int i = 0; i < NUM_DC_BANDS; i++) {
+    dutyCycleBands[i].tempDelta = bandsArray[i]["tempDelta"];
+    dutyCycleBands[i].dutyCycle = bandsArray[i]["dutyCycle"];
+  }
+  
+  Serial.println("✅ Config loaded from flash");
+  Serial.println("   Loaded " + String(NUM_STEPS) + " profile steps");
+  Serial.println("   Loaded " + String(NUM_DC_BANDS) + " duty cycle bands");
+  
+  return true;
+}
+
+void printConfig() {
+  Serial.println("\n===== CURRENT CONFIG =====");
+  Serial.println("PROFILE STEPS:");
+  for (int i = 0; i < NUM_STEPS; i++) {
+    Serial.println("  Step " + String(i) + ": " + String(profile[i].temp) + "°C for " + 
+                   String(profile[i].duration) + "s [" + String(profile[i].stageName) + "]");
+  }
+  
+  Serial.println("DUTY CYCLE BANDS:");
+  for (int i = 0; i < NUM_DC_BANDS; i++) {
+    Serial.println("  Band " + String(i) + ": ΔT=" + String(dutyCycleBands[i].tempDelta) + 
+                   "°C → DC=" + String(dutyCycleBands[i].dutyCycle) + "%");
+  }
+  Serial.println("==========================\n");
+}
  
 // ================= OUTPUT CONTROL =================
 void setOutputs(bool state) {
@@ -162,6 +277,8 @@ float getTargetTemp(unsigned long t) {
     float endTemp = profile[i].temp;
  
     if (elapsed < cumulative + profile[i].duration) {
+      currentStepIndex = i;
+      currentStageName = String(profile[i].stageName);
       float progress = float(elapsed - cumulative) / profile[i].duration;
       return startTemp + progress * (endTemp - startTemp);
     }
@@ -169,6 +286,8 @@ float getTargetTemp(unsigned long t) {
     cumulative += profile[i].duration;
   }
  
+  currentStepIndex = NUM_STEPS - 1;
+  currentStageName = String(profile[NUM_STEPS - 1].stageName);
   return profile[NUM_STEPS - 1].temp;
 }
  
@@ -177,29 +296,35 @@ int getTotalTime() {
   for (int i = 0; i < NUM_STEPS; i++) total += profile[i].duration;
   return total;
 }
+
+// ================= DUTY CYCLE LOOKUP =================
+float getDutyCycle(float currentTemp, float targetTemp) {
+  float error = targetTemp - currentTemp;
+  
+  // Find the appropriate duty cycle band
+  // Bands should be sorted by tempDelta (descending, from most positive to most negative)
+  for (int i = 0; i < NUM_DC_BANDS; i++) {
+    if (error >= dutyCycleBands[i].tempDelta) {
+      return dutyCycleBands[i].dutyCycle / 100.0; // Convert % to decimal
+    }
+  }
+  
+  // If no match, use last band (fallback)
+  return (NUM_DC_BANDS > 0) ? dutyCycleBands[NUM_DC_BANDS - 1].dutyCycle / 100.0 : 0.2;
+}
  
 // ================= SSR =================
 void controlSSR(float currentTemp, float targetTemp) {
   float error = targetTemp - currentTemp;
- 
+  
+  // Check if over temperature
   if (currentTemp >= targetTemp + 1.0) {
     setOutputs(false);
     Serial.println("SSR OFF (over +1C)");
     return;
   }
- 
-  float duty;
- 
-  if (error > 5.0) {
-    duty = 1.0;
-  }
-  else if (error > 0) {
-    duty = 0.2 + (error / 5.0) * 0.8;
-  }
-  else {
-    duty = 0.2;
-  }
- 
+  
+  float duty = getDutyCycle(currentTemp, targetTemp);
   int onTime = duty * 1000;
  
   if (millis() % 1000 < onTime) {
@@ -212,6 +337,86 @@ void controlSSR(float currentTemp, float targetTemp) {
  
   Serial.println("ERROR: " + String(error));
   Serial.println("DUTY: " + String(duty));
+}
+ 
+// ================= FETCH SETTINGS FROM GOOGLE SHEET =================
+bool fetchSettingsFromGoogle() {
+  if (!wifiConnected) {
+    Serial.println("⚠️ WiFi not connected - cannot fetch settings");
+    return false;
+  }
+  
+  if (!timeIsSynced()) {
+    Serial.println("⚠️ Time not synced - cannot fetch settings securely");
+    return false;
+  }
+  
+  HTTPClient http;
+  
+  String url = String(SCRIPT_URL) +
+    "?type=settings" +
+    "&device=" + String(DEVICE_ID) +
+    "&key=" + API_KEY;
+  
+  Serial.println("📥 FETCHING SETTINGS FROM GOOGLE:");
+  Serial.println(url);
+  
+  secureClient.setInsecure();
+  http.begin(secureClient, url);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setTimeout(10000);
+  
+  int code = http.GET();
+  
+  Serial.println("SETTINGS HTTP CODE: " + String(code));
+  
+  if (code != 200) {
+    Serial.println("❌ FAILED TO FETCH SETTINGS");
+    http.end();
+    return false;
+  }
+  
+  String payload = http.getString();
+  http.end();
+  
+  Serial.println("SETTINGS PAYLOAD: " + payload);
+  
+  // Parse JSON response
+  DynamicJsonDocument doc(4096);
+  DeserializationError error = deserializeJson(doc, payload);
+  
+  if (error) {
+    Serial.println("❌ Failed to parse settings JSON: " + String(error.c_str()));
+    return false;
+  }
+  
+  // Load profile
+  JsonArray stepsArray = doc["profile"];
+  NUM_STEPS = stepsArray.size();
+  if (NUM_STEPS > 8) NUM_STEPS = 8;
+  
+  for (int i = 0; i < NUM_STEPS; i++) {
+    profile[i].temp = stepsArray[i]["temp"];
+    profile[i].duration = stepsArray[i]["duration"];
+    strncpy(profile[i].stageName, stepsArray[i]["stageName"].as<const char*>(), 63);
+    profile[i].stageName[63] = '\0';
+  }
+  
+  // Load duty cycles
+  JsonArray bandsArray = doc["dutyCycles"];
+  NUM_DC_BANDS = bandsArray.size();
+  if (NUM_DC_BANDS > 12) NUM_DC_BANDS = 12;
+  
+  for (int i = 0; i < NUM_DC_BANDS; i++) {
+    dutyCycleBands[i].tempDelta = bandsArray[i]["tempDelta"];
+    dutyCycleBands[i].dutyCycle = bandsArray[i]["dutyCycle"];
+  }
+  
+  Serial.println("✅ SETTINGS FETCHED AND LOADED");
+  saveConfigToFlash();
+  printConfig();
+  
+  return true;
 }
  
 // ================= BUTTON EVENT SYNC =================
@@ -253,6 +458,30 @@ void sendButtonEvent(String command) {
 }
  
 // ================= GOOGLE =================
+// URL-encode a string (convert spaces to %20, etc.)
+String urlEncode(String str) {
+  String encoded = "";
+  for (int i = 0; i < str.length(); i++) {
+    char c = str.charAt(i);
+    if (c == ' ') {
+      encoded += "%20";
+    } else if (c == '&') {
+      encoded += "%26";
+    } else if (c == '=') {
+      encoded += "%3D";
+    } else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || 
+               (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+      encoded += c;
+    } else {
+      // For other characters, convert to hex
+      encoded += "%";
+      if (c < 16) encoded += "0";
+      encoded += String(c, HEX);
+    }
+  }
+  return encoded;
+}
+
 void sendData(String csv, float temp, int timeLeft) {
   if (!wifiConnected) {
     Serial.println("❌ WiFi not connected - skip send");
@@ -270,6 +499,8 @@ void sendData(String csv, float temp, int timeLeft) {
  
   String tempStr = String(temp);
   String timeLeftStr = String(timeLeft);
+  String stageNameStr = urlEncode(currentStageName);  // URL-encode stage name
+  
   String payload = csv + tempStr + timeLeftStr + String(ts);
   String sig = createHMAC(payload);
  
@@ -279,6 +510,7 @@ void sendData(String csv, float temp, int timeLeft) {
     "&csv=" + csv +
     "&temp=" + tempStr +
     "&timeleft=" + timeLeftStr +
+    "&stageName=" + stageNameStr +
     "&key=" + API_KEY +
     "&ts=" + String(ts) +
     "&sig=" + sig;
@@ -363,7 +595,10 @@ void setup() {
   Serial.println("RUN BUTTON:  D16");
   Serial.println("STOP BUTTON: D17");
   Serial.println("==================");
- 
+  
+  // Initialize SPIFFS
+  initSPIFFS();
+  
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
  
   Serial.print("CONNECTING TO WIFI");
@@ -379,10 +614,32 @@ void setup() {
     Serial.println(WiFi.localIP());
     wifiConnected = true;
     syncTime();
+    
+    // Fetch settings from Google Sheet
+    if (fetchSettingsFromGoogle()) {
+      Serial.println("✅ Using settings from Google Sheet");
+    } else {
+      Serial.println("⚠️ Failed to fetch settings from Google, trying local flash...");
+      if (loadConfigFromFlash()) {
+        Serial.println("✅ Using cached settings from flash");
+      } else {
+        Serial.println("❌ No cached settings available - using defaults");
+        // You could set hardcoded defaults here if needed
+      }
+    }
   } else {
     Serial.println("\n⚠️ WIFI NOT CONNECTED - RUNNING IN OFFLINE MODE");
     wifiConnected = false;
+    
+    // Try to load cached settings from flash
+    if (loadConfigFromFlash()) {
+      Serial.println("✅ Using cached settings from flash");
+    } else {
+      Serial.println("❌ No cached settings available");
+    }
   }
+  
+  printConfig();
 }
  
 // ================= LOOP =================
