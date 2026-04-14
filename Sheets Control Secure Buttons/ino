@@ -113,16 +113,33 @@ void saveConfigToFlash() {
     band["tempDelta"] = dutyCycleBands[i].tempDelta;
     band["dutyCycle"] = dutyCycleBands[i].dutyCycle;
   }
-  
+
+  // Convert new config to string
+  String newConfig;
+  serializeJson(doc, newConfig);
+
+  // Read existing config
+  if (SPIFFS.exists(CONFIG_FILE)) {
+    File existingFile = SPIFFS.open(CONFIG_FILE, "r");
+    String oldConfig = existingFile.readString();
+    existingFile.close();
+
+    if (oldConfig == newConfig) {
+      Serial.println("⚡ Config unchanged — skip flash write");
+      return;
+    }
+  }
+
+  // Write only if changed
   File configFile = SPIFFS.open(CONFIG_FILE, "w");
   if (!configFile) {
     Serial.println("❌ Failed to open config file for writing");
     return;
   }
-  
-  serializeJson(doc, configFile);
+
+  configFile.print(newConfig);
   configFile.close();
-  
+
   Serial.println("✅ Config saved to flash");
 }
 
@@ -186,8 +203,8 @@ void printConfig() {
   
   Serial.println("DUTY CYCLE BANDS:");
   for (int i = 0; i < NUM_DC_BANDS; i++) {
-    Serial.println("  Band " + String(i) + ": ΔT=" + String(dutyCycleBands[i].tempDelta) + 
-                   "°C → DC=" + String(dutyCycleBands[i].dutyCycle) + "%");
+    Serial.println("  Band " + String(i) + ": dT=" + String(dutyCycleBands[i].tempDelta) + 
+                   "°C -> DC=" + String(dutyCycleBands[i].dutyCycle) + "%");
   }
   Serial.println("==========================\n");
 }
