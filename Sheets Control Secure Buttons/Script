@@ -334,10 +334,27 @@ if (
     let lastTime = parseInt(props.getProperty(device + "_lastTime") || "-1");
  
     if (!isNaN(timeVal) && (timeVal < lastTime || lastTime === -1)) {
-      currentCol = lastUsedCol + 1;
-      if (currentCol < 1) currentCol = 1;
-      props.setProperty(device + "_col", String(currentCol));
+
+  // ===== MARK PREVIOUS RUN AS INCOMPLETE =====
+  if (currentCol > 0) {
+
+    let prevCol = currentCol;
+
+    let colData = sheet.getRange(2, prevCol, sheet.getMaxRows()).getValues();
+    let lastDataRow = colData.filter(r => r[0] !== "").length + 1;
+
+    let lastValue = sheet.getRange(lastDataRow, prevCol).getValue();
+
+    if (lastValue !== "COMPLETE") {
+      sheet.getRange(lastDataRow + 1, prevCol).setValue("INCOMPLETE");
     }
+  }
+
+  currentCol = lastUsedCol + 1;
+  if (currentCol < 1) currentCol = 1;
+
+  props.setProperty(device + "_col", String(currentCol));
+}
  
     props.setProperty(device + "_lastTime", String(timeVal));
  
@@ -356,6 +373,23 @@ if (
     let writeRow = colData.filter(r => r[0] !== "").length + 2;
  
     sheet.getRange(writeRow, currentCol).setValue(csv);
+
+// ===== MARK COMPLETE =====
+if (timeLeft !== "" && !isNaN(parseInt(timeLeft))) {
+
+  let remaining = parseInt(timeLeft);
+
+  if (remaining <= 0) {
+
+    let nextRow = writeRow + 1;
+
+    let existing = sheet.getRange(nextRow, currentCol).getValue();
+
+    if (existing === "") {
+      sheet.getRange(nextRow, currentCol).setValue("COMPLETE");
+    }
+  }
+}
  
     return ContentService.createTextOutput("OK");
   }
@@ -404,4 +438,149 @@ if (
   }
  
   return ContentService.createTextOutput("INVALID");
+}
+// =====================================================
+// ================= WEEKLY REPORT ======================
+// =====================================================
+
+function generateWeeklyReport() {
+
+  const DOC_ID = "1KlEyGb8SX9DvZq7i5DQa9qZjoMeK8QX_2dSUfWsYpSs";
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const doc = DocumentApp.openById(DOC_ID);
+  const body = doc.getBody();
+
+  const timezone = "Pacific/Auckland";
+
+  const now = new Date();
+  const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  // ===== NEW PAGE =====
+  body.appendPageBreak();
+
+  // ===== HEADER =====
+  body.appendParagraph("Weekly Oven Summary")
+      .setHeading(DocumentApp.ParagraphHeading.HEADING1);
+
+  body.appendParagraph(
+    Utilities.formatDate(lastWeek, timezone, "dd MMM") +
+    " - " +
+    Utilities.formatDate(now, timezone, "dd MMM yyyy")
+  );
+
+  body.appendParagraph("");
+
+  const ovens = ["oven_1","oven_2","oven_3","oven_4"];
+
+  let globalMin = null;
+  let globalMax = null;
+
+  let totalComplete = 0;
+  let totalIncomplete = 0;
+
+  // ===== SINGLE TABLE =====
+  let table = [[
+    "Oven",
+    "Total Cycles",
+    "Total Complete",
+    "Total Incomplete",
+    "Weekly Cycles",
+    "Weekly Complete",
+    "Weekly Incomplete",
+    "Min Temp",
+    "Max Temp"
+  ]];
+
+  ovens.forEach(device => {
+
+    const sheet = ss.getSheetByName(device);
+    if (!sheet) return;
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+
+    let totalC = 0;
+    let totalI = 0;
+
+    let weekC = 0;
+    let weekI = 0;
+
+    let minTemp = null;
+    let maxTemp = null;
+
+    for (let col = 2; col < headers.length; col++) {
+
+      let colValues = [];
+
+      for (let r = 1; r < data.length; r++) {
+        if (data[r][col] !== "") {
+          colValues.push(data[r][col]);
+        }
+      }
+
+      if (colValues.length === 0) continue;
+
+      let last = colValues[colValues.length - 1];
+
+      let isComplete = (last === "COMPLETE");
+      let isIncomplete = (last === "INCOMPLETE");
+
+      if (isComplete) totalC++;
+      if (isIncomplete) totalI++;
+
+      let headerDate = headers[col];
+      let isThisWeek = (headerDate instanceof Date && headerDate >= lastWeek);
+
+      if (isThisWeek) {
+
+        if (isComplete) weekC++;
+        if (isIncomplete) weekI++;
+
+        colValues.forEach(v => {
+          if (v.includes(",")) {
+            let t = parseFloat(v.split(",")[1]);
+
+            if (!isNaN(t)) {
+              if (minTemp === null || t < minTemp) minTemp = t;
+              if (maxTemp === null || t > maxTemp) maxTemp = t;
+
+              if (globalMin === null || t < globalMin) globalMin = t;
+              if (globalMax === null || t > globalMax) globalMax = t;
+            }
+          }
+        });
+      }
+    }
+
+    totalComplete += totalC;
+    totalIncomplete += totalI;
+
+    table.push([
+      device,
+      totalC + totalI,
+      totalC,
+      totalI,
+      weekC + weekI,
+      weekC,
+      weekI,
+      minTemp !== null ? minTemp.toFixed(2) : "",
+      maxTemp !== null ? maxTemp.toFixed(2) : ""
+    ]);
+  });
+
+  // ===== ADD TABLE =====
+  body.appendTable(table);
+
+  body.appendParagraph("");
+
+  // ===== GLOBAL TOTALS =====
+  body.appendParagraph("TOTAL COMPLETE: " + totalComplete);
+  body.appendParagraph("TOTAL INCOMPLETE: " + totalIncomplete);
+
+  body.appendParagraph("");
+
+  body.appendParagraph("GLOBAL MIN TEMP: " + (globalMin !== null ? globalMin.toFixed(2) : ""));
+  body.appendParagraph("GLOBAL MAX TEMP: " + (globalMax !== null ? globalMax.toFixed(2) : ""));
+
+  doc.saveAndClose();
 }
