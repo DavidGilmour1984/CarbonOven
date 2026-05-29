@@ -20,7 +20,6 @@ struct Stage {
   unsigned long durationSec;
 };
 
-// Profile 1: PLA Burnout Wet
 Stage wetStages[] = {
   { "Dry Ramp", 120,  3600 },
   { "Dry Soak", 120,  3600 },
@@ -33,7 +32,6 @@ Stage wetStages[] = {
 };
 const int wetStageCount = 8;
 
-// Profile 2: PLA Burnout Dry
 Stage dryStages[] = {
   { "Stm Ramp", 230,  1800 },
   { "Stm Soak", 230,  1800 },
@@ -44,7 +42,6 @@ Stage dryStages[] = {
 };
 const int dryStageCount = 6;
 
-// Profile 3: Aluminium Melt
 Stage alStages[] = {
   { "Preheat ", 400,  1200 },
   { "Melting ", 720,  1800 },
@@ -52,25 +49,35 @@ Stage alStages[] = {
 };
 const int alStageCount = 3;
 
-// Profile 4: Pewter Melt
 Stage pewterStages[] = {
   { "Melting ", 320,   600 },
   { "PourTemp", 320,     0 }
 };
 const int pewterStageCount = 2;
 
+Stage clayStages[] = {
+  { "Dry Ramp", 120,  3600 },
+  { "Dry Soak", 120,  3600 },
+  { "Mid Ramp", 600,  5400 },
+  { "Mid Soak", 600,  1800 },
+  { "Top Ramp", 1000, 3600 },
+  { "Top Soak", 1000, 1800 }
+};
+const int clayStageCount = 6;
+
 const char* profileNames[] = {
   "PLA Wet Burnout",
   "PLA Dry Burnout",
   "Aluminium Melt ",
   "Pewter Melt    ",
+  "Clay Bisque    ",
   "Manual Mode    "
 };
 
-Stage* profiles[]    = { wetStages,     dryStages,     alStages,     pewterStages     };
-int    stageCounts[] = { wetStageCount,  dryStageCount,  alStageCount, pewterStageCount };
+Stage* profiles[]    = { wetStages,    dryStages,    alStages,    pewterStages,    clayStages    };
+int    stageCounts[] = { wetStageCount, dryStageCount, alStageCount, pewterStageCount, clayStageCount };
 
-const int profileCount   = 5;  // 4 auto + 1 manual
+const int profileCount   = 6;
 int       currentProfile = 0;
 
 // ── Runtime state ─────────────────────────────────────────────────────────────
@@ -86,7 +93,7 @@ float         targetTemp     = 0;
 float         manualTarget   = 0;
 bool          lastStartBtn   = HIGH;
 bool          lastF1Btn      = HIGH;
-const float   manualStep     = 5.0;
+const float   manualStep     = 10.0;
 const float   manualMax      = 750.0;
 const float   manualMin      = 0.0;
 
@@ -120,7 +127,7 @@ void showProfileScreen() {
 }
 
 unsigned long totalProfileTime(int p) {
-  if (p >= 4) return 0;  // manual has no fixed time
+  if (p >= 5) return 0;
   unsigned long t = 0;
   for (int i = 0; i < stageCounts[p]; i++) t += profiles[p][i].durationSec;
   return t;
@@ -152,11 +159,12 @@ void setup() {
 
   lcd.init();
   lcd.backlight();
+  delay(100);
   showProfileScreen();
 
   int  menuPage    = 0;
   int  aboutPage   = 0;
-  bool lastBtn     = HIGH;
+  bool lastBtn     = (digitalRead(profilePin) == LOW) ? LOW : HIGH;
   bool lastStart   = LOW;
   unsigned long lastPageFlip  = 0;
   const unsigned long flipInterval = 5000;
@@ -165,7 +173,6 @@ void setup() {
     bool btn   = digitalRead(profilePin);
     bool start = digitalRead(startPin);
 
-    // ── F1 pressed ────────────────────────────────────────────────────────────
     if (btn == LOW && lastBtn == HIGH) {
       delay(50);
       if (menuPage == 0) {
@@ -185,7 +192,6 @@ void setup() {
     }
     lastBtn = btn;
 
-    // ── Start pressed ─────────────────────────────────────────────────────────
     if (start == HIGH && lastStart == LOW) {
       delay(50);
       if (menuPage == 1) {
@@ -197,7 +203,6 @@ void setup() {
     }
     lastStart = start;
 
-    // ── About page auto-flip every 5 seconds ──────────────────────────────────
     if (menuPage == 1 && millis() - lastPageFlip >= flipInterval) {
       aboutPage    = 1 - aboutPage;
       lastPageFlip = millis();
@@ -207,15 +212,13 @@ void setup() {
     delay(10);
   }
 
-  // ── Start run ─────────────────────────────────────────────────────────────
   float initTemp   = thermocouple.readCelsius();
   stageStartTemp   = initTemp;
   stageStartTime   = 0;
   currentStage     = 0;
   startTime        = millis();
 
-  // Manual mode: start target at current measured temp
-  if (currentProfile == 4) {
+  if (currentProfile == 5) {
     manualTarget = initTemp;
     lastStartBtn = digitalRead(startPin);
     lastF1Btn    = digitalRead(profilePin);
@@ -236,14 +239,13 @@ void loop() {
 
   unsigned long elapsed = (millis() - startTime) / 1000;
 
-  // ════════════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
   // MANUAL MODE
-  // ════════════════════════════════════════════════════════════════════════════
-  if (currentProfile == 4) {
+  // ══════════════════════════════════════════════════════════════════════════
+  if (currentProfile == 5) {
     bool startBtn = digitalRead(startPin);
     bool f1Btn    = digitalRead(profilePin);
 
-    // Start button → increase target by 5°C
     if (startBtn == HIGH && lastStartBtn == LOW) {
       delay(30);
       manualTarget += manualStep;
@@ -251,7 +253,6 @@ void loop() {
     }
     lastStartBtn = startBtn;
 
-    // F1 button → decrease target by 5°C
     if (f1Btn == LOW && lastF1Btn == HIGH) {
       delay(30);
       manualTarget -= manualStep;
@@ -261,7 +262,6 @@ void loop() {
 
     targetTemp = manualTarget;
 
-    // Element control
     if (temperature < (targetTemp - 8)) {
       digitalWrite(elementPin, HIGH);
     } else if (temperature <= targetTemp) {
@@ -272,41 +272,26 @@ void loop() {
       digitalWrite(elementPin, LOW);
     }
 
-    // Serial
     Serial.print(temperature, 2);
     Serial.print(" ");
     Serial.println(targetTemp, 2);
 
-    // LCD
-    lcd.setCursor(0, 0);
-    lcd.print("Mode   : Manual     ");
-
-    lcd.setCursor(0, 1);
-    lcd.print("Time   : ");
-    printHMS(elapsed);
-
-    lcd.setCursor(0, 2);
-    lcd.print("Target : ");
-    lcd.print(targetTemp, 0);
-    lcd.print("C +Strt ");
-
-    lcd.setCursor(0, 3);
-    lcd.print("Actual : ");
-    lcd.print(temperature, 0);
-    lcd.print("C -F1   ");
+    lcd.setCursor(0, 0); lcd.print("Mode   : Manual     ");
+    lcd.setCursor(0, 1); lcd.print("Time   : "); printHMS(elapsed);
+    lcd.setCursor(0, 2); lcd.print("Target : "); lcd.print(targetTemp, 0); lcd.print("C +St  ");
+    lcd.setCursor(0, 3); lcd.print("Actual : "); lcd.print(temperature, 0); lcd.print("C -F1  ");
 
     delay(100);
     return;
   }
 
-  // ════════════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
   // AUTO PROFILE MODES
-  // ════════════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
 
   Stage*        stages    = profiles[currentProfile];
   int           numStages = stageCounts[currentProfile];
 
-  // ── Advance stage ──────────────────────────────────────────────────────────
   while (currentStage < numStages - 1 &&
          stages[currentStage].durationSec > 0 &&
          elapsed >= (stageStartTime + stages[currentStage].durationSec)) {
@@ -317,7 +302,6 @@ void loop() {
     Serial.println(stages[currentStage].name);
   }
 
-  // ── Target temp ────────────────────────────────────────────────────────────
   Stage& s      = stages[currentStage];
   bool   isRamp = (s.durationSec > 0) && (s.targetTemp != stageStartTemp);
   if (isRamp) {
@@ -329,28 +313,24 @@ void loop() {
     targetTemp = s.targetTemp;
   }
 
-  // ── Completion ─────────────────────────────────────────────────────────────
   bool complete = (stages[numStages - 1].durationSec > 0 &&
                    currentStage == numStages - 1 &&
                    elapsed >= (stageStartTime + stages[numStages - 1].durationSec));
   if (complete) {
     digitalWrite(elementPin, LOW);
     lcd.clear();
-    lcd.setCursor(0, 0); lcd.print("  Cycle Complete");
-    lcd.setCursor(0, 1); lcd.print("  Element OFF");
-    lcd.setCursor(0, 2); lcd.print("  Total time:");
-    lcd.setCursor(0, 3);
-    printHMS(elapsed);
+    lcd.setCursor(0, 0); lcd.print("  Cycle Complete    ");
+    lcd.setCursor(0, 1); lcd.print("  Element OFF       ");
+    lcd.setCursor(0, 2); lcd.print("  Total time:       ");
+    lcd.setCursor(0, 3); printHMS(elapsed);
     Serial.println("Complete.");
     while (true) {}
   }
 
-  // ── Remaining and elapsed time ─────────────────────────────────────────────
   unsigned long totalTime     = totalProfileTime(currentProfile);
   unsigned long remainingTime = (totalTime > 0 && elapsed < totalTime) ?
                                  (totalTime - elapsed) : 0;
 
-  // ── Element control ────────────────────────────────────────────────────────
   if (temperature < (targetTemp - 8)) {
     digitalWrite(elementPin, HIGH);
   } else if (temperature <= targetTemp) {
@@ -361,12 +341,12 @@ void loop() {
     digitalWrite(elementPin, LOW);
   }
 
-  // ── Serial ─────────────────────────────────────────────────────────────────
   Serial.print(temperature, 2);
   Serial.print(" ");
   Serial.println(targetTemp, 2);
 
-  // ── LCD ────────────────────────────────────────────────────────────────────
+  lcd.setCursor(0, 0);
+  lcd.print("                    ");
   lcd.setCursor(0, 0);
   lcd.print("Cycle  : ");
   lcd.print(s.name);
@@ -376,20 +356,23 @@ void loop() {
     lcd.print("Remain : ");
     printHMS(remainingTime);
   } else {
-    // Indefinite hold — show elapsed time instead
     lcd.print("Elapsed: ");
     printHMS(elapsed);
   }
 
   lcd.setCursor(0, 2);
   lcd.print("Target : ");
+  if (targetTemp < 100) lcd.print(" ");
+  if (targetTemp < 10)  lcd.print(" ");
   lcd.print(targetTemp, 0);
-  lcd.print("C       ");
+  lcd.print("C     ");
 
   lcd.setCursor(0, 3);
   lcd.print("Actual : ");
+  if (temperature < 100) lcd.print(" ");
+  if (temperature < 10)  lcd.print(" ");
   lcd.print(temperature, 0);
-  lcd.print("C       ");
+  lcd.print("C     ");
 
   delay(100);
 }
