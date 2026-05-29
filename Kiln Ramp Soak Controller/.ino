@@ -2,180 +2,294 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
-int thermoDO = 11;
-int thermoCS = 10;
-int thermoCLK = 9;
-int startPin = 12;
+int thermoDO   = 11;
+int thermoCS   = 10;
+int thermoCLK  = 9;
+int startPin   = 12;
 int elementPin = 13;
-
-const float targetTemperature = 120; //Target temperature for end of First ramp
-const float targetTemperature2 = 195; //Target temperature for end of Second ramp
-const float targetTemperature3 = 0; //Target temperature for end of Third ramp
-float startTemperature = 0;
-const int rampTime = 90; //Time of First ramp
-const int soakTime = 90; //Time of First soak
-const int rampTime2 = 20; //Time of Second ramp
-const int soakTime2 = 100;  //Time of Second soak
-const int rampTime3 = 5;  //Time of Third ramp
-float rateOfChange = 0;
-float rateOfChange2 = 0;
-float rateOfChange3 = 0;
+int profilePin = 2;
 
 MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
-unsigned long startTime;
-bool rampTimePassed = false;
-bool rampTimePassed2 = false;
-bool rampTimePassed3 = false;  // New flag for the third cycle
-bool soakTimePassed = false;
-float targetTemp = 0;
-String currentCycle = "";
+LiquidCrystal_I2C lcd(0x27, 20, 4);
 
-LiquidCrystal_I2C lcd(0x27, 24, 4); // initialize the LCD
+// ── Profiles ──────────────────────────────────────────────────────────────────
+
+struct Stage {
+  const char*   name;
+  float         targetTemp;
+  unsigned long durationSec;
+};
+
+// Profile 1: PLA Burnout Wet
+Stage wetStages[] = {
+  { "Dry Ramp", 120,  3600 },
+  { "Dry Soak", 120,  3600 },
+  { "Stm Ramp", 230,  1800 },
+  { "Stm Soak", 230,  3600 },
+  { "Mlt Ramp", 350,  1800 },
+  { "Mlt Soak", 350,  3600 },
+  { "Brn Ramp", 550,  1800 },
+  { "Burnout ", 550,  3600 }
+};
+const int wetStageCount = 8;
+
+// Profile 2: PLA Burnout Dry
+Stage dryStages[] = {
+  { "Stm Ramp", 230,  1800 },
+  { "Stm Soak", 230,  1800 },
+  { "Mlt Ramp", 350,  1200 },
+  { "Mlt Soak", 350,  2700 },
+  { "Brn Ramp", 550,  1200 },
+  { "Burnout ", 550,  2700 }
+};
+const int dryStageCount = 6;
+
+// Profile 3: Aluminium Melt
+Stage alStages[] = {
+  { "Preheat ", 400,  1200 },
+  { "Melting ", 720,  1800 },
+  { "PourTemp", 720,     0 }
+};
+const int alStageCount = 3;
+
+// Profile 4: Pewter Melt
+Stage pewterStages[] = {
+  { "Melting ", 320,   600 },
+  { "PourTemp", 320,     0 }
+};
+const int pewterStageCount = 2;
+
+const char* profileNames[] = {
+  "PLA Wet Burnout",
+  "PLA Dry Burnout",
+  "Aluminium Melt ",
+  "Pewter Melt    "
+};
+
+Stage* profiles[]    = { wetStages,    dryStages,    alStages,   pewterStages   };
+int    stageCounts[] = { wetStageCount, dryStageCount, alStageCount, pewterStageCount };
+
+const int profileCount   = 4;
+int       currentProfile = 0;
+
+// ── Runtime state ─────────────────────────────────────────────────────────────
+
+unsigned long startTime      = 0;
+int           currentStage   = 0;
+float         stageStartTemp = 0;
+float         stageStartTime = 0;
+float         targetTemp     = 0;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+void showPinout(int page) {
+  lcd.clear();
+  if (page == 0) {
+    lcd.setCursor(0, 0); lcd.print("---- Pinout 1/2 ----");
+    lcd.setCursor(0, 1); lcd.print("D2  : F1 Button");
+    lcd.setCursor(0, 2); lcd.print("D9  : MAX6675 CLK");
+    lcd.setCursor(0, 3); lcd.print("D10 : MAX6675 CS");
+  } else {
+    lcd.setCursor(0, 0); lcd.print("---- Pinout 2/2 ----");
+    lcd.setCursor(0, 1); lcd.print("D11 : MAX6675 DO");
+    lcd.setCursor(0, 2); lcd.print("D12 : Start Button");
+    lcd.setCursor(0, 3); lcd.print("D13 : Element");
+  }
+}
+
+void showProfileScreen() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("F1 To Change Cycle");
+  for (int i = 0; i < 3; i++) {
+    int idx = (currentProfile + i) % profileCount;
+    lcd.setCursor(0, i + 1);
+    lcd.print(i == 0 ? "> " : "  ");
+    lcd.print(profileNames[idx]);
+  }
+}
+
+unsigned long totalProfileTime(int p) {
+  unsigned long t = 0;
+  for (int i = 0; i < stageCounts[p]; i++) t += profiles[p][i].durationSec;
+  return t;
+}
+
+// ── Setup ─────────────────────────────────────────────────────────────────────
 
 void setup() {
-pinMode(startPin, INPUT);
-pinMode(elementPin, OUTPUT);
-Serial.begin(9600);
-Serial.println("Thermocouple test pass");
+  pinMode(startPin,   INPUT);
+  pinMode(elementPin, OUTPUT);
+  pinMode(profilePin, INPUT_PULLUP);
+  Serial.begin(9600);
+  delay(500);
 
-// wait for MAX chip to stabilize
-delay(500);
+  lcd.init();
+  lcd.backlight();
+  showProfileScreen();
 
-startTemperature = thermocouple.readCelsius();
-rateOfChange = (targetTemperature - startTemperature) / rampTime;
-rateOfChange2 = (targetTemperature2 - targetTemperature) / rampTime2;
-rateOfChange3 = (targetTemperature3 - targetTemperature2) / rampTime3;  // New rate of change for the third cycle
+  int  menuPage    = 0;
+  int  aboutPage   = 0;
+  bool lastBtn     = HIGH;
+  bool lastStart   = LOW;
+  unsigned long lastPageFlip  = 0;
+  const unsigned long flipInterval = 5000;
 
-lcd.init(); // start the LCD
-lcd.backlight();
-lcd.setCursor(0, 1); // set cursor to column 0, row 1
-lcd.print("  RSRSR Contoller");
-lcd.setCursor(0, 2); // set cursor to column 0, row 2
-lcd.print("      SN42BI58");
+  while (true) {
+    bool btn   = digitalRead(profilePin);
+    bool start = digitalRead(startPin);
 
+    // ── F1 pressed ────────────────────────────────────────────────────────────
+    if (btn == LOW && lastBtn == HIGH) {
+      delay(50);
+      if (menuPage == 0) {
+        currentProfile = (currentProfile + 1) % profileCount;
+        if (currentProfile == 0) {
+          menuPage     = 1;
+          aboutPage    = 0;
+          lastPageFlip = millis();
+          showPinout(aboutPage);
+        } else {
+          showProfileScreen();
+        }
+      } else {
+        menuPage = 0;
+        showProfileScreen();
+      }
+    }
+    lastBtn = btn;
 
-// Wait for the start pin to be pulled high
-while (digitalRead(startPin) != HIGH) {
-delay(10);
+    // ── Start pressed ─────────────────────────────────────────────────────────
+    if (start == HIGH && lastStart == LOW) {
+      delay(50);
+      if (menuPage == 1) {
+        menuPage = 0;
+        showProfileScreen();
+      } else {
+        break;
+      }
+    }
+    lastStart = start;
+
+    // ── About page auto-flip every 5 seconds ──────────────────────────────────
+    if (menuPage == 1 && millis() - lastPageFlip >= flipInterval) {
+      aboutPage    = 1 - aboutPage;
+      lastPageFlip = millis();
+      showPinout(aboutPage);
+    }
+
+    delay(10);
+  }
+
+  // ── Start run ─────────────────────────────────────────────────────────────
+  stageStartTemp = thermocouple.readCelsius();
+  stageStartTime = 0;
+  currentStage   = 0;
+  startTime      = millis();
+
+  Serial.print("Profile: ");
+  Serial.println(profileNames[currentProfile]);
 }
-startTime = millis();
-}
+
+// ── Loop ──────────────────────────────────────────────────────────────────────
 
 void loop() {
-float temperature = thermocouple.readCelsius();
-if (temperature == 0) { // check if the returned temperature is 0
-Serial.println("Error reading temperature. Check thermocouple connection.");
-return; // exit the loop to prevent further execution
-}
+  float temperature = thermocouple.readCelsius();
+  if (temperature == 0) {
+    Serial.println("Error: check thermocouple.");
+    return;
+  }
 
+  Stage*        stages    = profiles[currentProfile];
+  int           numStages = stageCounts[currentProfile];
+  unsigned long elapsed   = (millis() - startTime) / 1000;
 
-// Calculate the target temperature based on time elapsed
-if ((millis() - startTime) / 1000 < rampTime)
-targetTemp = startTemperature + rateOfChange * (millis() - startTime) / 1000;
-else if ((millis() - startTime) / 1000 >= rampTime && !rampTimePassed) {
-targetTemp = targetTemperature;
-rampTimePassed = true;
-} else if (rampTimePassed && (millis() - startTime) / 1000 < (rampTime + soakTime))
-targetTemp = targetTemperature;
-else if (rampTimePassed && !soakTimePassed && (millis() - startTime) / 1000 >= (rampTime + soakTime)) {
-soakTimePassed = true;
-startTemperature = targetTemperature; // start temp for 2nd ramp
-rateOfChange = (targetTemperature2 - startTemperature) / rampTime2;
-} else if (soakTimePassed && (millis() - startTime) / 1000 < (rampTime + soakTime + rampTime2))
-targetTemp = startTemperature + rateOfChange * ((millis() - startTime) / 1000 - (rampTime + soakTime));
-else if (soakTimePassed && !rampTimePassed2 && (millis() - startTime) / 1000 >= (rampTime + soakTime + rampTime2)) {
-targetTemp = targetTemperature2;
-rampTimePassed2 = true;
-} else if (rampTimePassed2 && (millis() - startTime) / 1000 < (rampTime + soakTime + rampTime2 + soakTime2))
-targetTemp = targetTemperature2;
-else if (rampTimePassed2 && !rampTimePassed3 && (millis() - startTime) / 1000 >= (rampTime + soakTime + rampTime2 + soakTime2)) {
-soakTimePassed = true;
-rampTimePassed3 = true;
-startTemperature = targetTemperature2; // start temp for 3rd ramp
-rateOfChange = (targetTemperature3 - startTemperature) / rampTime3;
-} else if (rampTimePassed3 && (millis() - startTime) / 1000 < (rampTime + soakTime + rampTime2 + soakTime2 + rampTime3))
-targetTemp = startTemperature + rateOfChange * ((millis() - startTime) / 1000 - (rampTime + soakTime + rampTime2 + soakTime2));
-else if (rampTimePassed3 && !soakTimePassed && (millis() - startTime) / 1000 >= (rampTime + soakTime + rampTime2 + soakTime2 + rampTime3)) {
-targetTemp = targetTemperature3;
-soakTimePassed = true;
-}
+  // ── Advance stage ──────────────────────────────────────────────────────────
+  while (currentStage < numStages - 1 &&
+         stages[currentStage].durationSec > 0 &&
+         elapsed >= (stageStartTime + stages[currentStage].durationSec)) {
+    stageStartTime += stages[currentStage].durationSec;
+    currentStage++;
+    stageStartTemp = stages[currentStage - 1].targetTemp;
+    Serial.print("Stage: ");
+    Serial.println(stages[currentStage].name);
+  }
 
+  // ── Target temp ────────────────────────────────────────────────────────────
+  Stage& s      = stages[currentStage];
+  bool   isRamp = (s.durationSec > 0) && (s.targetTemp != stageStartTemp);
+  if (isRamp) {
+    float rate         = (s.targetTemp - stageStartTemp) / (float)s.durationSec;
+    float stageElapsed = elapsed - stageStartTime;
+    targetTemp = stageStartTemp + rate * stageElapsed;
+    if (targetTemp > s.targetTemp) targetTemp = s.targetTemp;
+  } else {
+    targetTemp = s.targetTemp;
+  }
 
-// Update current cycle based on the elapsed time
-if ((millis() - startTime) / 1000 < rampTime)
-currentCycle = "1st Ramp";
-else if ((millis() - startTime) / 1000 < (rampTime + soakTime))
-currentCycle = "1st Soak ";
-else if ((millis() - startTime) / 1000 < (rampTime + soakTime + rampTime2))
-currentCycle = "2nd Ramp";
-else if ((millis() - startTime) / 1000 < (rampTime + soakTime + rampTime2 + soakTime2))
-currentCycle = "2nd Soak";
-else if ((millis() - startTime) / 1000 < (rampTime + soakTime + rampTime2 + soakTime2 + rampTime3))
-currentCycle = "3rd Ramp";
-else
-currentCycle = "Complete";
+  // ── Completion ─────────────────────────────────────────────────────────────
+  bool complete = (stages[numStages - 1].durationSec > 0 &&
+                   currentStage == numStages - 1 &&
+                   elapsed >= (stageStartTime + stages[numStages - 1].durationSec));
+  if (complete) {
+    digitalWrite(elementPin, LOW);
+    lcd.clear();
+    lcd.setCursor(0, 1); lcd.print("  Cycle Complete");
+    lcd.setCursor(0, 2); lcd.print("  Element OFF");
+    Serial.println("Complete.");
+    while (true) {}
+  }
 
-// Calculate the remaining time
-unsigned long elapsedTime = (millis() - startTime) / 1000;
-unsigned long remainingTime = (rampTime + soakTime + rampTime2 + soakTime2 + rampTime3) - elapsedTime;
-int remainingMinutes = remainingTime / 60;
-int remainingSeconds = remainingTime % 60;
+  // ── Remaining time ─────────────────────────────────────────────────────────
+  unsigned long totalTime     = totalProfileTime(currentProfile);
+  unsigned long remainingTime = (totalTime > 0 && elapsed < totalTime) ?
+                                 (totalTime - elapsed) : 0;
+  int remMin = remainingTime / 60;
+  int remSec = remainingTime % 60;
 
-// Add condition for soak time passed
-if (rampTimePassed2 && (millis() - startTime) / 1000 >= (rampTime + soakTime + rampTime2 + soakTime2 + rampTime3)) {
-lcd.clear(); // clear the previous message
-lcd.setCursor(0, 1);
-lcd.print("  Cycles Complete"); // print roast complete message
-digitalWrite(elementPin, LOW); // Turn off element
+  // ── Element control ────────────────────────────────────────────────────────
+  if (temperature < (targetTemp - 8)) {
+    digitalWrite(elementPin, HIGH);
+  } else if (temperature <= targetTemp) {
+    digitalWrite(elementPin, (millis() % 1000 < 300) ? HIGH : LOW);
+  } else if (temperature <= (targetTemp + 5)) {
+    digitalWrite(elementPin, (millis() % 2000 < 200) ? HIGH : LOW);
+  } else {
+    digitalWrite(elementPin, LOW);
+  }
 
-while (true) {}; // infinite loop
-}
+  // ── Serial ─────────────────────────────────────────────────────────────────
+  Serial.print(temperature, 2);
+  Serial.print(" ");
+  Serial.println(targetTemp, 2);
 
-// This is the rough "PID" hack section
+  // ── LCD ────────────────────────────────────────────────────────────────────
+  lcd.setCursor(0, 0);
+  lcd.print("Cycle  : ");
+  lcd.print(s.name);
 
-if (temperature < (targetTemp - 8)) { // The negative numebr at the end is the temperature difference below the target temperature that the emement will stay on.
-digitalWrite(elementPin, HIGH); // Once it goes above this it will start pulsing
+  lcd.setCursor(0, 1);
+  if (totalTime > 0) {
+    lcd.print("Time   : ");
+    if (remMin < 10) lcd.print("0");
+    lcd.print(remMin);
+    lcd.print("m ");
+    if (remSec < 10) lcd.print("0");
+    lcd.print(remSec);
+    lcd.print("s  ");
+  } else {
+    lcd.print("Time   : --:--      ");
+  }
 
-} else if (temperature <= targetTemp) { // if it is within the difference between the number from above and the target temp the pulsing will happen
-if (millis() % 1000 < 300) {  // This controls the pulsing. The bigger the left number and smaller the right number the less the pulsing.
-digitalWrite(elementPin, HIGH);
-} else {
-digitalWrite(elementPin, LOW);
-}
+  lcd.setCursor(0, 2);
+  lcd.print("Target : ");
+  lcd.print(targetTemp, 0);
+  lcd.print("C       ");
 
-} else if (temperature <= (targetTemp + 5)) { // The + number is the end is for the temperature that this condition will work up to
-if (millis() % 2000 < 200) { // This controls the pulsing. The bigger the left number and smaller the right number the less the pulsing.
-digitalWrite(elementPin, HIGH);
-} else {
-digitalWrite(elementPin, LOW);
-}
-} else {
-digitalWrite(elementPin, LOW);  // If the temperature is above the temperature difference above and the target temperature the element will remain off
-}
-{
-Serial.print(temperature, 2);
-Serial.print(" ");
-Serial.println(targetTemp, 2);
+  lcd.setCursor(0, 3);
+  lcd.print("Actual : ");
+  lcd.print(temperature, 0);
+  lcd.print("C       ");
 
-}
-
-lcd.setCursor(0, 0);
-lcd.print("  Cycle   : ");
-lcd.print(currentCycle);
-lcd.setCursor(0, 1);
-lcd.print("Time Left : ");
-lcd.print(remainingMinutes);
-lcd.print("m ");
-lcd.print(remainingSeconds);
-lcd.print("s  ");
-lcd.setCursor(0, 2);
-lcd.print(" Target      Actual");
-lcd.setCursor(0, 3);
-lcd.print("  ");
-lcd.print(targetTemp, 0);
-lcd.print("C    :   ");
-lcd.print(temperature, 0);
-lcd.print("C");
-
-delay(100);
+  delay(100);
 }
