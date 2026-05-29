@@ -42,6 +42,22 @@ Stage dryStages[] = {
 };
 const int dryStageCount = 6;
 
+Stage justMeltStages[] = {
+  { "Dry Ramp", 120,  3600 },
+  { "Dry Soak", 120,  3600 },
+  { "Stm Ramp", 230,  1800 },
+  { "Stm Soak", 230,  3600 },
+  { "Mlt Ramp", 270,  1800 },
+  { "Mlt Soak", 270,  3600 }
+};
+const int justMeltStageCount = 6;
+
+Stage justBurnStages[] = {
+  { "Brn Ramp", 550,  3600 },
+  { "Burnout ", 550,  3600 }
+};
+const int justBurnStageCount = 2;
+
 Stage alStages[] = {
   { "Preheat ", 400,  1200 },
   { "Melting ", 720,  1800 },
@@ -68,16 +84,18 @@ const int clayStageCount = 6;
 const char* profileNames[] = {
   "PLA Wet Burnout",
   "PLA Dry Burnout",
+  "PLA Just Melt  ",
+  "PLA Just Burn  ",
   "Aluminium Melt ",
   "Pewter Melt    ",
   "Clay Bisque    ",
   "Manual Mode    "
 };
 
-Stage* profiles[]    = { wetStages,    dryStages,    alStages,    pewterStages,    clayStages    };
-int    stageCounts[] = { wetStageCount, dryStageCount, alStageCount, pewterStageCount, clayStageCount };
+Stage* profiles[]    = { wetStages,    dryStages,    justMeltStages,    justBurnStages,    alStages,    pewterStages,    clayStages    };
+int    stageCounts[] = { wetStageCount, dryStageCount, justMeltStageCount, justBurnStageCount, alStageCount, pewterStageCount, clayStageCount };
 
-const int profileCount   = 6;
+const int profileCount   = 8;
 int       currentProfile = 0;
 
 // ── Runtime state ─────────────────────────────────────────────────────────────
@@ -127,7 +145,7 @@ void showProfileScreen() {
 }
 
 unsigned long totalProfileTime(int p) {
-  if (p >= 5) return 0;
+  if (p >= 7) return 0;
   unsigned long t = 0;
   for (int i = 0; i < stageCounts[p]; i++) t += profiles[p][i].durationSec;
   return t;
@@ -218,7 +236,7 @@ void setup() {
   currentStage     = 0;
   startTime        = millis();
 
-  if (currentProfile == 5) {
+  if (currentProfile == 7) {
     manualTarget = initTemp;
     lastStartBtn = digitalRead(startPin);
     lastF1Btn    = digitalRead(profilePin);
@@ -242,7 +260,7 @@ void loop() {
   // ══════════════════════════════════════════════════════════════════════════
   // MANUAL MODE
   // ══════════════════════════════════════════════════════════════════════════
-  if (currentProfile == 5) {
+  if (currentProfile == 7) {
     bool startBtn = digitalRead(startPin);
     bool f1Btn    = digitalRead(profilePin);
 
