@@ -1,0 +1,586 @@
+  const SECRET = "";
+function doGet(e) {
+
+  // ===== SAFE ENTRY =====
+  if (!e || !e.parameter) {
+    return ContentService
+      .createTextOutput("READY")
+      .setMimeType(ContentService.MimeType.TEXT);
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  const type = e.parameter.type || "";
+  const device = e.parameter.device || "unknown";
+
+  // ================= SECURITY CONFIG =================
+  const DEVICE_KEYS = {
+    "oven_1": "",
+    "oven_2": "",
+    "oven_3": "KEY_3_GHI",
+    "oven_4": "KEY_4_JKL",
+    "oven_5": "KEY_5_MNO",
+    "oven_6": "KEY_6_PQR",
+    "oven_7": "KEY_7_STU",
+    "oven_8": "KEY_8_VWX"
+  };
+
+  const SECRET = "";
+
+  function createHMAC(message) {
+    const raw = Utilities.computeHmacSha256Signature(message, SECRET);
+    return raw.map(b => ('0' + (b & 0xFF).toString(16)).slice(-2)).join('');
+  }
+ 
+  // ================= PROFILE =================
+  // NOTE: Profile is now fetched from ESP32 with each log entry
+  // These functions are kept as fallbacks only (should rarely be needed)
+ 
+  function getStageTimeRemaining(timeSeconds) {
+    // Fallback: if for some reason we don't have the stage from ESP32,
+    // we can't calculate this accurately without the full profile.
+    // Return 0 to indicate unknown.
+    return 0;
+  }
+ 
+  // ================= SETTINGS =================
+  if (type === "settings") {
+    
+    const key = e.parameter.key || "";
+    
+    // ===== DEVICE WHITELIST =====
+    if (!DEVICE_KEYS[device] || DEVICE_KEYS[device] !== key) {
+      return ContentService.createTextOutput("DENIED");
+    }
+    
+    let settingsSheet = ss.getSheetByName("Controller Settings");
+    if (!settingsSheet) {
+      return ContentService.createTextOutput("SETTINGS_SHEET_NOT_FOUND");
+    }
+    
+    // Read the data
+    let data = settingsSheet.getRange("A1:O10").getValues();
+    
+    // Extract profile (Temperature, Time, Stage Name columns)
+    let profileArray = [];
+    for (let row = 1; row < data.length; row++) { // Skip header
+      let temp = data[row][0];  // Column A
+      let time = data[row][1];  // Column B
+      let stageName = data[row][2]; // Column C
+      
+      if (temp === "" || time === "") break; // Stop at first empty row
+      
+      profileArray.push({
+        "temp": parseFloat(temp),
+        "duration": parseInt(time),
+        "stageName": String(stageName)
+      });
+    }
+    
+    // Extract duty cycles (T1-T6 pairs)
+    let dutyCyclesArray = [];
+    
+    // Find where the duty cycle data starts (after Stage Name, should be column D onwards)
+    // Format: T1, DC1, T2, DC2, T3, DC3, T4, DC4, T5, DC5, T6, DC6
+    // This means columns D-O in the header row
+    let headers = data[0]; // Header row
+    
+    for (let col = 3; col < headers.length; col += 2) { // Start at D (index 3), step by 2
+      let tempThreshold = data[1][col];  // First data row for T1, T2, etc
+      let dutyCycle = data[1][col + 1];  // First data row for DC1, DC2, etc
+      
+      if (tempThreshold === "" || dutyCycle === "") break;
+      
+      dutyCyclesArray.push({
+        "tempDelta": parseFloat(tempThreshold),
+        "dutyCycle": parseFloat(dutyCycle)
+      });
+    }
+    
+    // Sort duty cycles by tempDelta in descending order
+    dutyCyclesArray.sort((a, b) => b.tempDelta - a.tempDelta);
+    
+    let response = {
+      "profile": profileArray,
+      "dutyCycles": dutyCyclesArray
+    };
+    
+    // Update the "Last Flash Update" timestamp for this device in the sheet
+    // Read the full range to find the device
+    let fullData = settingsSheet.getRange("A10:B30").getValues();
+    
+    let lastFlashRow = 0;
+    for (let i = 0; i < fullData.length; i++) {
+      if (fullData[i][0] === device) {
+        lastFlashRow = i + 10;  // i=0 is row 10, i=1 is row 11, etc.
+        break;
+      }
+    }
+    
+    if (lastFlashRow > 0) {
+      let now = new Date();
+      let timestamp = Utilities.formatDate(now, "Pacific/Auckland", "dd/MM/yyyy HH:mm:ss");
+      settingsSheet.getRange(lastFlashRow, 2).setValue(timestamp); // Column B (row 10, 11, 12, etc.)
+    }
+    
+    return ContentService
+      .createTextOutput(JSON.stringify(response))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+ 
+  // ================= MASTER =================
+  let master = ss.getSheetByName("Master");
+  if (!master) {
+    master = ss.insertSheet("Master");
+ 
+    master.getRange("A1").setValue("Device");
+    master.getRange("B1").setValue("Command");
+    master.getRange("C1").setValue("Temp");
+    master.getRange("D1").setValue("Target Temp");
+    master.getRange("E1").setValue("Stage");
+    master.getRange("F1").setValue("Stage Time Left (min)");
+    master.getRange("G1").setValue("Finish Time");
+    master.getRange("H1").setValue("Last Seen");
+  }
+ 
+  let masterData = master.getRange("A2:A").getValues();
+  let rowIndex = masterData.findIndex(r => r[0] === device);
+ 
+  let row;
+  if (rowIndex === -1) {
+    row = master.getLastRow() + 1;
+    master.getRange(row, 1).setValue(device);
+    master.getRange(row, 2).setValue("STOP");
+  } else {
+    row = rowIndex + 2;
+  }
+ 
+  // ================= BUTTON EVENT (NEW) =================
+  if (type === "button") {
+ 
+    const command = e.parameter.command || "";
+    const key = e.parameter.key || "";
+ 
+    // ===== DEVICE WHITELIST =====
+    if (!DEVICE_KEYS[device] || DEVICE_KEYS[device] !== key) {
+      return ContentService.createTextOutput("DENIED_DEVICE");
+    }
+ 
+    // Update the Command cell with the button press
+    if (command === "RUN" || command === "STOP") {
+      master.getRange(row, 2).setValue(command);
+      Serial.println("Button press from " + device + ": " + command);
+      return ContentService.createTextOutput("BUTTON_OK");
+    }
+ 
+    return ContentService.createTextOutput("INVALID_COMMAND");
+  }
+ 
+  // ================= CONTROL =================
+  if (type === "control") {
+ 
+    const key = e.parameter.key || "";
+ 
+    if (!DEVICE_KEYS[device] || DEVICE_KEYS[device] !== key) {
+      return ContentService.createTextOutput("DENIED");
+    }
+ 
+    let command = master.getRange(row, 2).getValue();
+    return ContentService.createTextOutput(command);
+  }
+ 
+  // ================= LOGGING =================
+  if (type === "log") {
+ 
+    const csv = e.parameter.csv || "";
+    const temp = e.parameter.temp || "";
+    const timeLeft = e.parameter.timeleft || "";
+    const stageName = e.parameter.stageName || "";
+ 
+    const key = e.parameter.key || "";
+    const sig = e.parameter.sig || "";
+    const ts = parseInt(e.parameter.ts || "0");
+ 
+    // ===== DEVICE WHITELIST =====
+    if (!DEVICE_KEYS[device] || DEVICE_KEYS[device] !== key) {
+      return ContentService.createTextOutput("DENIED_DEVICE");
+    }
+ 
+    // ===== TIMESTAMP CHECK =====
+    if (Math.abs(Date.now() - ts) > 10000) {
+      return ContentService.createTextOutput("STALE");
+    }
+ 
+    // ===== SIGNATURE CHECK =====
+    const payload = csv + temp + timeLeft + ts;
+    const expected = createHMAC(payload);
+ 
+    if (sig !== expected) {
+      return ContentService.createTextOutput("INVALID_SIG");
+    }
+ 
+    const props = PropertiesService.getScriptProperties();
+ 
+    // ===== ORIGINAL LOGIC CONTINUES UNCHANGED =====
+    master.getRange(row, 3).setValue(temp);
+ 
+    let lastPacket = Utilities.formatDate(new Date(), "Pacific/Auckland", "dd/MM/yyyy HH:mm:ss");
+    master.getRange(row, 8).setValue(lastPacket);
+ 
+    let stageNameOutput = stageName || "";  // Use ESP32's stage name directly
+    let targetTemp = "";
+    let stageTimeLeft = 0;
+ 
+    if (csv !== "") {
+      let parts = csv.split(",");
+      let elapsedSeconds = parseInt(parts[0], 10);
+      targetTemp = parts[2] || "";
+      
+      // Calculate time remaining in the current stage
+      // We need to find which stage we're in and how much time is left in that stage
+      stageTimeLeft = calculateStageTimeRemaining(elapsedSeconds, stageName);
+    }
+ 
+    let commandState = master.getRange(row, 2).getValue();
+
+if (
+  commandState === "RUN" &&
+  csv !== "" &&
+  timeLeft !== "" &&
+  !isNaN(parseInt(timeLeft))
+) {
+
+  master.getRange(row, 4).setValue(targetTemp);
+  master.getRange(row, 5).setValue(stageNameOutput);
+  master.getRange(row, 6).setValue(stageTimeLeft);
+
+} else {
+
+  master.getRange(row, 4).setValue("");
+  master.getRange(row, 5).setValue("");
+  master.getRange(row, 6).setValue("");
+
+}
+ 
+    // ===== HIGH TEMP ALERT (UNCHANGED) =====
+    let lastRow = master.getLastRow();
+    let temps = master.getRange(2, 3, lastRow - 1, 1)
+      .getValues()
+      .flat()
+      .map(v => parseFloat(v))
+      .filter(v => !isNaN(v));
+ 
+    let maxTemp = temps.length ? Math.max(...temps) : 0;
+ 
+    let lastAlert = parseInt(props.getProperty("lastHighTempEmail") || "0");
+    let nowMs = Date.now();
+ 
+    if (maxTemp > 150 && (nowMs - lastAlert > 60000)) {
+      MailApp.sendEmail({
+        to: "d.c.gilmour@gmail.com",
+        subject: "🔥 HIGH TEMP ALERT",
+        body: "Max Temp: " + maxTemp
+      });
+      props.setProperty("lastHighTempEmail", String(nowMs));
+    }
+ 
+    if (csv !== "" && timeLeft !== "" && !isNaN(parseInt(timeLeft))) {
+ 
+      let finishTime = new Date(Date.now() + (parseInt(timeLeft) * 1000));
+      let formattedFinish = Utilities.formatDate(finishTime, "Pacific/Auckland", "HH:mm:ss");
+ 
+      master.getRange(row, 7).setValue(formattedFinish);
+ 
+      if (parseInt(timeLeft) <= 0) {
+        master.getRange(row, 2).setValue("STOP");
+      }
+ 
+    } else {
+  master.getRange(row, 5).setValue("");
+  master.getRange(row, 6).setValue("");
+  master.getRange(row, 7).setValue("Element Off");
+}
+ 
+    if (csv === "") {
+      return ContentService.createTextOutput("NO_DATA");
+    }
+ 
+    let sheet = ss.getSheetByName(device);
+ 
+    if (!sheet) {
+      sheet = ss.insertSheet(device);
+      sheet.clear();
+      sheet.clearFormats();
+      sheet.deleteColumns(2, sheet.getMaxColumns() - 1);
+      sheet.insertColumns(2, 20);
+      props.deleteProperty(device + "_col");
+    }
+ 
+    let headers = sheet.getRange(1, 1, 1, sheet.getMaxColumns()).getValues()[0];
+ 
+    let lastUsedCol = 0;
+    for (let i = headers.length - 1; i >= 0; i--) {
+      if (headers[i] !== "") {
+        lastUsedCol = i + 1;
+        break;
+      }
+    }
+ 
+    let currentCol = parseInt(props.getProperty(device + "_col") || "0");
+ 
+    let parts = csv.split(",");
+    let timeVal = parseInt(parts[0], 10);
+ 
+    let lastTime = parseInt(props.getProperty(device + "_lastTime") || "-1");
+ 
+    if (!isNaN(timeVal) && (timeVal < lastTime || lastTime === -1)) {
+
+  // ===== MARK PREVIOUS RUN AS INCOMPLETE =====
+  if (currentCol > 0) {
+
+    let prevCol = currentCol;
+
+    let colData = sheet.getRange(2, prevCol, sheet.getMaxRows()).getValues();
+    let lastDataRow = colData.filter(r => r[0] !== "").length + 1;
+
+    let lastValue = sheet.getRange(lastDataRow, prevCol).getValue();
+
+    if (lastValue !== "COMPLETE") {
+      sheet.getRange(lastDataRow + 1, prevCol).setValue("INCOMPLETE");
+    }
+  }
+
+  currentCol = lastUsedCol + 1;
+  if (currentCol < 1) currentCol = 1;
+
+  props.setProperty(device + "_col", String(currentCol));
+}
+ 
+    props.setProperty(device + "_lastTime", String(timeVal));
+ 
+    if (!currentCol || currentCol < 1) {
+      currentCol = 1;
+      props.setProperty(device + "_col", "1");
+    }
+ 
+    let header = sheet.getRange(1, currentCol).getValue();
+    if (!header) {
+      let runName = Utilities.formatDate(new Date(), "Pacific/Auckland", "yyyy/MM/dd HH:mm:ss");
+      sheet.getRange(1, currentCol).setValue(runName);
+    }
+ 
+    let colData = sheet.getRange(2, currentCol, sheet.getMaxRows()).getValues();
+    let writeRow = colData.filter(r => r[0] !== "").length + 2;
+ 
+    sheet.getRange(writeRow, currentCol).setValue(csv);
+
+// ===== MARK COMPLETE =====
+if (timeLeft !== "" && !isNaN(parseInt(timeLeft))) {
+
+  let remaining = parseInt(timeLeft);
+
+  if (remaining <= 0) {
+
+    let nextRow = writeRow + 1;
+
+    let existing = sheet.getRange(nextRow, currentCol).getValue();
+
+    if (existing === "") {
+      sheet.getRange(nextRow, currentCol).setValue("COMPLETE");
+    }
+  }
+}
+ 
+    return ContentService.createTextOutput("OK");
+  }
+  
+  // ===== HELPER: Calculate time remaining in current stage =====
+  function calculateStageTimeRemaining(elapsedSeconds, currentStageName) {
+    // Get the profile from Controller Settings
+    let settingsSheet = ss.getSheetByName("Controller Settings");
+    if (!settingsSheet) {
+      return 0;
+    }
+    
+    let data = settingsSheet.getRange("A1:C10").getValues();
+    
+    // Build profile array from sheet
+    let profileData = [];
+    for (let row = 1; row < data.length; row++) {
+      let temp = data[row][0];
+      let time = data[row][1];
+      let stageName = data[row][2];
+      
+      if (temp === "" || time === "") break;
+      
+      profileData.push({
+        "duration": parseInt(time),
+        "stageName": String(stageName)
+      });
+    }
+    
+    // Find which stage we're in based on elapsed time
+    let cumulative = 0;
+    for (let i = 0; i < profileData.length; i++) {
+      let stageEnd = cumulative + profileData[i].duration;
+      
+      if (elapsedSeconds < stageEnd) {
+        // We're in this stage
+        let timeInStage = elapsedSeconds - cumulative;
+        let timeRemainingInStage = profileData[i].duration - timeInStage;
+        return Math.round(timeRemainingInStage / 60);  // Convert to minutes
+      }
+      
+      cumulative = stageEnd;
+    }
+    
+    return 0;  // Profile complete
+  }
+ 
+  return ContentService.createTextOutput("INVALID");
+}
+// =====================================================
+// ================= WEEKLY REPORT ======================
+// =====================================================
+
+function generateWeeklyReport() {
+
+  const DOC_ID = "1KlEyGb8SX9DvZq7i5DQa9qZjoMeK8QX_2dSUfWsYpSs";
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const doc = DocumentApp.openById(DOC_ID);
+  const body = doc.getBody();
+
+  const timezone = "Pacific/Auckland";
+
+  const now = new Date();
+  const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  // ===== NEW PAGE =====
+  body.appendPageBreak();
+
+  // ===== HEADER =====
+  body.appendParagraph("Weekly Oven Summary")
+      .setHeading(DocumentApp.ParagraphHeading.HEADING1);
+
+  body.appendParagraph(
+    Utilities.formatDate(lastWeek, timezone, "dd MMM") +
+    " - " +
+    Utilities.formatDate(now, timezone, "dd MMM yyyy")
+  );
+
+  body.appendParagraph("");
+
+  const ovens = ["oven_1","oven_2","oven_3","oven_4"];
+
+  let globalMin = null;
+  let globalMax = null;
+
+  let totalComplete = 0;
+  let totalIncomplete = 0;
+
+  // ===== SINGLE TABLE =====
+  let table = [[
+    "Oven",
+    "Total Cycles",
+    "Total Complete",
+    "Total Incomplete",
+    "Weekly Cycles",
+    "Weekly Complete",
+    "Weekly Incomplete",
+    "Min Temp",
+    "Max Temp"
+  ]];
+
+  ovens.forEach(device => {
+
+    const sheet = ss.getSheetByName(device);
+    if (!sheet) return;
+
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+
+    let totalC = 0;
+    let totalI = 0;
+
+    let weekC = 0;
+    let weekI = 0;
+
+    let minTemp = null;
+    let maxTemp = null;
+
+    for (let col = 2; col < headers.length; col++) {
+
+      let colValues = [];
+
+      for (let r = 1; r < data.length; r++) {
+        if (data[r][col] !== "") {
+          colValues.push(data[r][col]);
+        }
+      }
+
+      if (colValues.length === 0) continue;
+
+      let last = colValues[colValues.length - 1];
+
+      let isComplete = (last === "COMPLETE");
+      let isIncomplete = (last === "INCOMPLETE");
+
+      if (isComplete) totalC++;
+      if (isIncomplete) totalI++;
+
+      let headerDate = headers[col];
+      let isThisWeek = (headerDate instanceof Date && headerDate >= lastWeek);
+
+      if (isThisWeek) {
+
+        if (isComplete) weekC++;
+        if (isIncomplete) weekI++;
+
+        colValues.forEach(v => {
+          if (v.includes(",")) {
+            let t = parseFloat(v.split(",")[1]);
+
+            if (!isNaN(t)) {
+              if (minTemp === null || t < minTemp) minTemp = t;
+              if (maxTemp === null || t > maxTemp) maxTemp = t;
+
+              if (globalMin === null || t < globalMin) globalMin = t;
+              if (globalMax === null || t > globalMax) globalMax = t;
+            }
+          }
+        });
+      }
+    }
+
+    totalComplete += totalC;
+    totalIncomplete += totalI;
+
+    table.push([
+      device,
+      totalC + totalI,
+      totalC,
+      totalI,
+      weekC + weekI,
+      weekC,
+      weekI,
+      minTemp !== null ? minTemp.toFixed(2) : "",
+      maxTemp !== null ? maxTemp.toFixed(2) : ""
+    ]);
+  });
+
+  // ===== ADD TABLE =====
+  body.appendTable(table);
+
+  body.appendParagraph("");
+
+  // ===== GLOBAL TOTALS =====
+  body.appendParagraph("TOTAL COMPLETE: " + totalComplete);
+  body.appendParagraph("TOTAL INCOMPLETE: " + totalIncomplete);
+
+  body.appendParagraph("");
+
+  body.appendParagraph("GLOBAL MIN TEMP: " + (globalMin !== null ? globalMin.toFixed(2) : ""));
+  body.appendParagraph("GLOBAL MAX TEMP: " + (globalMax !== null ? globalMax.toFixed(2) : ""));
+
+  doc.saveAndClose();
+}
