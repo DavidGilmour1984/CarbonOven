@@ -26,7 +26,7 @@
 // WIFI
 // =====================
 #define WIFI_SSID          "DPhone"
-#define WIFI_PASSWORD      "12345678"
+#define WIFI_PASSWORD      ""
 #define WIFI_TIMEOUT_MS    20000   // give up after 20 seconds
 
 // =====================
@@ -38,8 +38,8 @@
 // =====================
 // SECURITY
 // =====================
-String API_KEY = "u2DTMufqSvkij72zo6uCY4dSemA3UPdgxngLauKrh5HYfSECP5CB6zkrB9Zi"; // change for each oven
-String SECRET  = "6YGbkpqMQj8zAav9hkmMMb4rGSAoJazG75aXrh3mrpZhhVS9XXZ8rysfUajp"; // keep the same
+String API_KEY = ""; // change for each oven
+String SECRET  = ""; // keep the same
 
 // =====================
 // SERIAL
