@@ -25,27 +25,29 @@
 // =====================
 // WIFI
 // =====================
-#define WIFI_SSID          "DPhone"
-#define WIFI_PASSWORD      ""
+#define WIFI_SSID     "xxxxxxxxxxxxxxxxxxx"
+#define WIFI_PASSWORD "xxxxxxxxxxxxxxxxxxxxxxxxx"
 #define WIFI_TIMEOUT_MS    20000   // give up after 20 seconds
 
 // =====================
 // SCRIPT
 // =====================
-#define SCRIPT_URL "https://script.google.com/macros/s/AKfycbwfbBBiYX8Zja1W6BHC4lEwvNKXgq-bvKIUp_X2Ix2JB1eDEOAVtVT3enoVKnchQYQ66g/exec"
-#define DEVICE_ID  "oven_1"
+#define SCRIPT_URL "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+#define DEVICE_ID  "oven_2"
 
 // =====================
 // SECURITY
 // =====================
-String API_KEY = ""; // change for each oven
-String SECRET  = ""; // keep the same
+String API_KEY = "ruxhKA97n9eXzvLYJJZDoHnxcvuXqgaa7H92fd4RAdJQqTheN3q52FmDVjYZ"; // change for each oven
+String SECRET  = "6YGbkpqMQj8zAav9hkmMMb4rGSAoJazG75aXrh3mrpZhhVS9XXZ8rysfUajp"; // keep the same
+
+
 
 // =====================
 // SERIAL
 // =====================
 #define SERIAL_BAUD 9600
-
+ 
 // =====================
 // TIME
 // =====================
@@ -53,14 +55,14 @@ const char* NTP_SERVER_1        = "pool.ntp.org";
 const char* NTP_SERVER_2        = "time.nist.gov";
 const long  GMT_OFFSET_SEC      = 12 * 3600;
 const int   DAYLIGHT_OFFSET_SEC = 0;
-
+ 
 // =====================
 // OBJECTS
 // =====================
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 MAX6675           thermocouple(MAX6675_SCK, MAX6675_CS, MAX6675_SO);
 WiFiClientSecure  secureClient;
-
+ 
 // =====================
 // PROFILE STRUCTURE
 // =====================
@@ -69,21 +71,21 @@ struct Step {
   int   duration;
   char  stageName[64];
 };
-
+ 
 struct DutyCycleBand {
   float tempDelta;
   float dutyCycle;
 };
-
+ 
 Step          profile[8];
 DutyCycleBand dutyCycleBands[12];
-
+ 
 int NUM_STEPS    = 0;
 int NUM_DC_BANDS = 0;
-
+ 
 int    currentStepIndex = 0;
 String currentStageName = "";
-
+ 
 // =====================
 // STATE
 // =====================
@@ -97,12 +99,12 @@ bool          ssrState      = false;
 bool          wifiConnected = false;
 bool          offlineMode   = false;  // true when WiFi never connected at boot
 int           activeDefaultProfile = 1; // which default profile is selected offline
-
+ 
 // LCD display globals (written by control loop, read by updateLCD)
 float lcdCurrentTemp = 0;
 float lcdTargetTemp  = 0;
 int   lcdTimeLeft    = 0;
-
+ 
 // =====================
 // BUTTON DEBOUNCE
 // =====================
@@ -111,24 +113,44 @@ unsigned long lastRunButtonTime  = 0;
 unsigned long lastStopButtonTime = 0;
 bool lastRunButtonState  = HIGH;
 bool lastStopButtonState = HIGH;
-
+ 
 bool   runLocked     = false;
 String lastRemoteCmd = "";
-
+ 
 // =====================
-// BUZZER (NON-BLOCKING)
+// BUZZER
 // =====================
 unsigned long beepEnd = 0;
-
+ 
+// Non-blocking single tone — used during loop()
 void beep(int freq, int durationMs) {
-  ledcWriteTone(0, freq);
+  ledcWriteTone(BUZZER_PIN, freq);
   beepEnd = millis() + durationMs;
 }
-
+ 
+// Blocking tone — used in setup() and for short multi-step sequences
+void beepB(int freq, int durationMs) {
+  ledcWriteTone(BUZZER_PIN, freq);
+  delay(durationMs);
+  ledcWriteTone(BUZZER_PIN, 0);
+}
+ 
+// Rising sweep from startFreq to endFreq over durationMs (blocking)
+void beepSweep(int startFreq, int endFreq, int durationMs) {
+  int steps = 40;
+  int stepDelay = durationMs / steps;
+  for (int i = 0; i <= steps; i++) {
+    int freq = startFreq + (endFreq - startFreq) * i / steps;
+    ledcWriteTone(BUZZER_PIN, freq);
+    delay(stepDelay);
+  }
+  ledcWriteTone(BUZZER_PIN, 0);
+}
+ 
 // =====================
 // LCD HELPERS
 // =====================
-
+ 
 // Print a 16-char padded line to the LCD (pads/truncates to exactly 16 chars)
 void lcdLine(int row, String msg) {
   while (msg.length() < 16) msg += ' ';
@@ -136,7 +158,7 @@ void lcdLine(int row, String msg) {
   lcd.setCursor(0, row);
   lcd.print(msg);
 }
-
+ 
 // Show a two-line error message and hold for durationMs
 void lcdError(String line1, String line2, int durationMs = 2000) {
   lcdLine(0, "ERR:" + line1);
@@ -144,13 +166,15 @@ void lcdError(String line1, String line2, int durationMs = 2000) {
   Serial.println("LCD ERR: " + line1 + " | " + line2);
   delay(durationMs);
 }
-
+ 
 // =====================
 // SPIFFS
 // =====================
 #define CONFIG_FILE "/config.json"
-
+ 
 void initSPIFFS() {
+  lcdLine(0, String(DEVICE_ID));
+  lcdLine(1, "INIT STORAGE...");
   if (!SPIFFS.begin(true)) {
     Serial.println("SPIFFS Mount Failed");
     lcdError("SPIFFS", "Mount failed");
@@ -158,10 +182,10 @@ void initSPIFFS() {
   }
   Serial.println("SPIFFS Mounted");
 }
-
+ 
 void saveConfigToFlash() {
   JsonDocument doc;
-
+ 
   JsonArray stepsArray = doc.createNestedArray("profile");
   for (int i = 0; i < NUM_STEPS; i++) {
     JsonObject step   = stepsArray.createNestedObject();
@@ -169,17 +193,17 @@ void saveConfigToFlash() {
     step["duration"]  = profile[i].duration;
     step["stageName"] = profile[i].stageName;
   }
-
+ 
   JsonArray bandsArray = doc.createNestedArray("dutyCycles");
   for (int i = 0; i < NUM_DC_BANDS; i++) {
     JsonObject band    = bandsArray.createNestedObject();
     band["tempDelta"]  = dutyCycleBands[i].tempDelta;
     band["dutyCycle"]  = dutyCycleBands[i].dutyCycle;
   }
-
+ 
   String newConfig;
   serializeJson(doc, newConfig);
-
+ 
   if (SPIFFS.exists(CONFIG_FILE)) {
     File f = SPIFFS.open(CONFIG_FILE, "r");
     String oldConfig = f.readString();
@@ -189,7 +213,9 @@ void saveConfigToFlash() {
       return;
     }
   }
-
+ 
+  lcdLine(0, String(DEVICE_ID));
+  lcdLine(1, "SAVING CONFIG...");
   File configFile = SPIFFS.open(CONFIG_FILE, "w");
   if (!configFile) {
     Serial.println("Failed to open config file for writing");
@@ -199,31 +225,35 @@ void saveConfigToFlash() {
   configFile.print(newConfig);
   configFile.close();
   Serial.println("Config saved to flash");
+  lcdLine(1, "CONFIG SAVED");
 }
-
+ 
 bool loadConfigFromFlash() {
+  lcdLine(0, String(DEVICE_ID));
+  lcdLine(1, "READING FLASH...");
   if (!SPIFFS.exists(CONFIG_FILE)) {
     Serial.println("Config file not found on flash");
+    lcdLine(1, "NO FLASH FILE");
     return false;
   }
-
+ 
   File configFile = SPIFFS.open(CONFIG_FILE, "r");
   if (!configFile) {
     Serial.println("Failed to open config file");
     lcdError("FLASH", "Open failed");
     return false;
   }
-
+ 
   JsonDocument doc;
   DeserializationError error = deserializeJson(doc, configFile);
   configFile.close();
-
+ 
   if (error) {
     Serial.println("Failed to parse config JSON: " + String(error.c_str()));
     lcdError("FLASH", "Bad JSON");
     return false;
   }
-
+ 
   JsonArray stepsArray = doc["profile"];
   NUM_STEPS = min((int)stepsArray.size(), 8);
   for (int i = 0; i < NUM_STEPS; i++) {
@@ -232,18 +262,19 @@ bool loadConfigFromFlash() {
     strncpy(profile[i].stageName, stepsArray[i]["stageName"].as<const char*>(), 63);
     profile[i].stageName[63] = '\0';
   }
-
+ 
   JsonArray bandsArray = doc["dutyCycles"];
   NUM_DC_BANDS = min((int)bandsArray.size(), 12);
   for (int i = 0; i < NUM_DC_BANDS; i++) {
     dutyCycleBands[i].tempDelta = bandsArray[i]["tempDelta"];
     dutyCycleBands[i].dutyCycle = bandsArray[i]["dutyCycle"];
   }
-
+ 
   Serial.println("Config loaded from flash (" + String(NUM_STEPS) + " steps)");
+  lcdLine(1, "FLASH: " + String(NUM_STEPS) + " STEPS OK");
   return true;
 }
-
+ 
 void printConfig() {
   Serial.println("\n===== CURRENT CONFIG =====");
   for (int i = 0; i < NUM_STEPS; i++) {
@@ -258,7 +289,7 @@ void printConfig() {
   }
   Serial.println("==========================\n");
 }
-
+ 
 // =====================
 // DEFAULT PROFILES
 // =====================
@@ -271,14 +302,14 @@ static const DutyCycleBand DEFAULT_BANDS[6] = {
   { -99.0f,  0.0f }
 };
 #define DEFAULT_NUM_BANDS 6
-
+ 
 // Profile 0 — test/calibration: 15->40->5 over 15 min
 static const Step DEFAULT_STEPS_TEST[3] = {
   { 40.0f,  300, "Ramp Up"   },
   { 40.0f,  600, "Soak"      },
   {  5.0f,  300, "Cool Down" }
 };
-
+ 
 // Profile 1 — OOA prepreg carbon fibre cure
 static const Step DEFAULT_STEPS_CARBON[5] = {
   {  70.0f,  3000, "Ramp to Flow" },
@@ -287,19 +318,22 @@ static const Step DEFAULT_STEPS_CARBON[5] = {
   { 125.0f,  5400, "Cure Soak"    },
   {  40.0f,  9900, "Cool Down"    }
 };
-
+ 
 const char* DEFAULT_PROFILE_NAMES[2] = {
   "Test Cycle",
   "Carbon Fibre"
 };
-
+ 
 void loadDefaultProfile(int profileIndex) {
   activeDefaultProfile = profileIndex;
+  lcdLine(0, String(DEVICE_ID));
   if (profileIndex == 0) {
+    lcdLine(1, "LOAD: TEST CYCLE");
     NUM_STEPS = 3;
     for (int i = 0; i < NUM_STEPS; i++) profile[i] = DEFAULT_STEPS_TEST[i];
     Serial.println("DEFAULT PROFILE: Test Cycle");
   } else {
+    lcdLine(1, "LOAD: CARBON FBR");
     NUM_STEPS = 5;
     for (int i = 0; i < NUM_STEPS; i++) profile[i] = DEFAULT_STEPS_CARBON[i];
     Serial.println("DEFAULT PROFILE: Carbon Fibre Cure");
@@ -308,7 +342,7 @@ void loadDefaultProfile(int profileIndex) {
   for (int i = 0; i < NUM_DC_BANDS; i++) dutyCycleBands[i] = DEFAULT_BANDS[i];
   printConfig();
 }
-
+ 
 // =====================
 // OUTPUT CONTROL
 // =====================
@@ -316,25 +350,25 @@ void setSSR(bool state) {
   ssrState = state;
   digitalWrite(SSR_PIN, state);
 }
-
+ 
 // =====================
 // LCD UPDATE
 // =====================
 void updateLCD() {
   static float idleTemp     = 0;
   static unsigned long lastIdleRead = 0;
-
+ 
   if (!running) {
     // Refresh idle temp at 1 Hz
     if (millis() - lastIdleRead >= 1000) {
       lastIdleRead = millis();
       idleTemp = thermocouple.readCelsius();
     }
-
+ 
     // Line 0: device ID + wifi status
     String statusChar = wifiConnected ? "W" : (offlineMode ? "X" : "?");
     lcdLine(0, String(DEVICE_ID) + "  " + statusChar + "  " + String(idleTemp, 1) + "C");
-
+ 
     // Line 1: selected profile name (offline) or IDLE (online)
     if (offlineMode) {
       lcdLine(1, String(DEFAULT_PROFILE_NAMES[activeDefaultProfile]));
@@ -345,7 +379,7 @@ void updateLCD() {
     }
     return;
   }
-
+ 
   // Running — line 0: temps + SSR indicator
   char ssrChar = ssrState ? '*' : '-';
   char line1[17];
@@ -353,7 +387,7 @@ void updateLCD() {
            lcdCurrentTemp, lcdTargetTemp, ssrChar);
   lcd.setCursor(0, 0);
   lcd.print(line1);
-
+ 
   // Running — line 1: stage name + MM:SS remaining
   char stageBuf[12];
   strncpy(stageBuf, currentStageName.c_str(), 11);
@@ -365,7 +399,7 @@ void updateLCD() {
   lcd.setCursor(0, 1);
   lcd.print(line2);
 }
-
+ 
 // =====================
 // BUTTON DEBOUNCE
 // =====================
@@ -381,7 +415,7 @@ bool readButton(int pin, unsigned long &lastTime, bool &lastState) {
   }
   return false;
 }
-
+ 
 // =====================
 // SECURITY
 // =====================
@@ -403,18 +437,20 @@ String createHMAC(String message) {
   hash.toLowerCase();
   return hash;
 }
-
+ 
 bool timeIsSynced() {
   return time(nullptr) > 1700000000;
 }
-
+ 
 long long getEpochMillis() {
   struct timeval tv;
   gettimeofday(&tv, nullptr);
   return ((long long)tv.tv_sec * 1000LL) + (tv.tv_usec / 1000);
 }
-
+ 
 void syncTime() {
+  lcdLine(0, String(DEVICE_ID));
+  lcdLine(1, "NTP SYNC...");
   configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER_1, NTP_SERVER_2);
   Serial.print("SYNCING TIME");
   int tries = 0;
@@ -425,23 +461,25 @@ void syncTime() {
   }
   if (timeIsSynced()) {
     Serial.println("\nTIME SYNCED");
+    lcdLine(1, "TIME SYNCED");
+    delay(400);
   } else {
     Serial.println("\nTIME SYNC FAILED");
     lcdError("TIME", "Sync failed", 1500);
   }
 }
-
+ 
 // =====================
 // TARGET TEMP
 // =====================
 float getTargetTemp(unsigned long t) {
   unsigned long elapsed  = t / 1000;
   int           cumulative = 0;
-
+ 
   for (int i = 0; i < NUM_STEPS; i++) {
     float startTemp = (i == 0) ? profile[0].temp : profile[i - 1].temp;
     float endTemp   = profile[i].temp;
-
+ 
     if (elapsed < (unsigned long)(cumulative + profile[i].duration)) {
       currentStepIndex = i;
       currentStageName = String(profile[i].stageName);
@@ -450,18 +488,18 @@ float getTargetTemp(unsigned long t) {
     }
     cumulative += profile[i].duration;
   }
-
+ 
   currentStepIndex = NUM_STEPS - 1;
   currentStageName = String(profile[NUM_STEPS - 1].stageName);
   return profile[NUM_STEPS - 1].temp;
 }
-
+ 
 int getTotalTime() {
   int total = 0;
   for (int i = 0; i < NUM_STEPS; i++) total += profile[i].duration;
   return total;
 }
-
+ 
 // =====================
 // DUTY CYCLE LOOKUP
 // =====================
@@ -474,7 +512,7 @@ float getDutyCycle(float currentTemp, float targetTemp) {
   }
   return (NUM_DC_BANDS > 0) ? dutyCycleBands[NUM_DC_BANDS - 1].dutyCycle / 100.0 : 0.2;
 }
-
+ 
 // =====================
 // SSR CONTROL
 // =====================
@@ -496,37 +534,37 @@ void controlSSR(float currentTemp, float targetTemp) {
   Serial.println("ERROR: " + String(targetTemp - currentTemp));
   Serial.println("DUTY:  " + String(duty));
 }
-
+ 
 // =====================
 // FETCH SETTINGS
 // =====================
 bool fetchSettingsFromGoogle() {
   if (!wifiConnected) return false;
   if (!timeIsSynced())  return false;
-
+ 
   HTTPClient http;
   String url = String(SCRIPT_URL) +
     "?type=settings&device=" + String(DEVICE_ID) + "&key=" + API_KEY;
-
+ 
   Serial.println("FETCHING SETTINGS");
   secureClient.setInsecure();
   http.begin(secureClient, url);
   http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
   http.setTimeout(10000);
-
+ 
   int code = http.GET();
   Serial.println("SETTINGS HTTP: " + String(code));
-
+ 
   if (code != 200) {
     http.end();
     String errMsg = "HTTP " + String(code);
     lcdError("SHEET", errMsg, 2000);
     return false;
   }
-
+ 
   String payload = http.getString();
   http.end();
-
+ 
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, payload);
   if (err) {
@@ -534,7 +572,7 @@ bool fetchSettingsFromGoogle() {
     lcdError("SHEET", "Bad JSON", 2000);
     return false;
   }
-
+ 
   JsonArray stepsArray = doc["profile"];
   NUM_STEPS = min((int)stepsArray.size(), 8);
   for (int i = 0; i < NUM_STEPS; i++) {
@@ -543,20 +581,23 @@ bool fetchSettingsFromGoogle() {
     strncpy(profile[i].stageName, stepsArray[i]["stageName"].as<const char*>(), 63);
     profile[i].stageName[63] = '\0';
   }
-
+ 
   JsonArray bandsArray = doc["dutyCycles"];
   NUM_DC_BANDS = min((int)bandsArray.size(), 12);
   for (int i = 0; i < NUM_DC_BANDS; i++) {
     dutyCycleBands[i].tempDelta = bandsArray[i]["tempDelta"];
     dutyCycleBands[i].dutyCycle = bandsArray[i]["dutyCycle"];
   }
-
+ 
   Serial.println("SETTINGS LOADED FROM SHEET");
+  lcdLine(1, "SHEET: " + String(NUM_STEPS) + " STEPS OK");
+  delay(600);
+  lcdLine(1, "SAVING TO FLASH...");
   saveConfigToFlash();
   printConfig();
   return true;
 }
-
+ 
 // =====================
 // BUTTON EVENT
 // =====================
@@ -575,7 +616,7 @@ void sendButtonEvent(String command) {
   Serial.println("BUTTON EVENT: " + String(code));
   http.end();
 }
-
+ 
 // =====================
 // URL ENCODE
 // =====================
@@ -597,13 +638,13 @@ String urlEncode(String str) {
   }
   return encoded;
 }
-
+ 
 // =====================
 // SEND DATA
 // =====================
 void sendData(String csv, float temp, int timeLeft) {
   if (!wifiConnected || !timeIsSynced()) return;
-
+ 
   HTTPClient http;
   long long ts       = getEpochMillis();
   String tempStr     = String(temp);
@@ -611,18 +652,18 @@ void sendData(String csv, float temp, int timeLeft) {
   String stageStr    = urlEncode(currentStageName);
   String payload     = csv + tempStr + timeLeftStr + String(ts);
   String sig         = createHMAC(payload);
-
+ 
   String url = String(SCRIPT_URL) +
     "?type=log&device=" + String(DEVICE_ID) +
     "&csv=" + csv + "&temp=" + tempStr +
     "&timeleft=" + timeLeftStr + "&stageName=" + stageStr +
     "&key=" + API_KEY + "&ts=" + String(ts) + "&sig=" + sig;
-
+ 
   secureClient.setInsecure();
   http.begin(secureClient, url);
   http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
   http.setTimeout(5000);
-
+ 
   int code = http.GET();
   Serial.println("SEND HTTP: " + String(code));
   if (code > 0) {
@@ -636,7 +677,7 @@ void sendData(String csv, float temp, int timeLeft) {
   }
   http.end();
 }
-
+ 
 // =====================
 // GET COMMAND
 // =====================
@@ -661,41 +702,41 @@ String getCommand() {
   http.end();
   return "";
 }
-
+ 
 // =====================
 // SETUP
 // =====================
 void setup() {
   Serial.begin(SERIAL_BAUD);
-
+ 
   Wire.begin(LCD_SDA_PIN, LCD_SCL_PIN);
   lcd.init();
   lcd.backlight();
-
+ 
   pinMode(SSR_PIN,      OUTPUT);
   pinMode(START_BUTTON, INPUT_PULLUP);
   pinMode(STOP_BUTTON,  INPUT_PULLUP);
-
+ 
   // ESP32 core v3.x: ledcSetup/ledcAttachPin replaced by ledcAttach
-  ledcAttach(BUZZER_PIN, 0, 8);  // channel 0, 8-bit resolution
-
+  ledcAttach(BUZZER_PIN, 2000, 8);  // pin, freq, resolution (v3.x API)
+ 
   setSSR(false);
-
+ 
   Serial.println("\n==================");
   Serial.println("BOOTING " + String(DEVICE_ID));
   Serial.println("==================");
-
+ 
   // ---- Startup splash ----
   lcdLine(0, String(DEVICE_ID));
   lcdLine(1, "BOOTING...");
-
+ 
   initSPIFFS();
-
+ 
   // ---- WiFi with 20s timeout ----
   lcdLine(0, String(DEVICE_ID) + " WIFI...");
   lcdLine(1, "");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
+ 
   unsigned long wifiStart = millis();
   int dotCol = 0;
   while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < WIFI_TIMEOUT_MS) {
@@ -707,24 +748,24 @@ void setup() {
     dotCol = (dotCol + 1) % 16;
   }
   Serial.println();
-
+ 
   if (WiFi.status() == WL_CONNECTED) {
     // ---- WiFi connected ----
     wifiConnected = true;
     offlineMode   = false;
     String ip     = WiFi.localIP().toString();
     Serial.println("WIFI OK: " + ip);
-
+ 
     // Show device + IP for 2.5 seconds
     lcdLine(0, String(DEVICE_ID) + " ONLINE");
     lcdLine(1, ip);
     delay(2500);
-
+ 
     // ---- Time sync ----
     lcdLine(0, String(DEVICE_ID));
     lcdLine(1, "TIME SYNC...");
     syncTime();
-
+ 
     // ---- Fetch profile from sheet ----
     lcdLine(1, "FETCHING CFG...");
     if (fetchSettingsFromGoogle()) {
@@ -745,19 +786,19 @@ void setup() {
         loadDefaultProfile(activeDefaultProfile);
       }
     }
-
+ 
   } else {
     // ---- WiFi failed ----
     wifiConnected = false;
     offlineMode   = true;
     Serial.println("WIFI FAILED - OFFLINE");
-
+ 
     lcdLine(0, String(DEVICE_ID) + " OFFLINE");
     lcdLine(1, "NO WIFI");
     delay(1000);
-
+ 
     lcdError("WIFI", "No connection", 2000);
-
+ 
     // Try flash cache first
     lcdLine(1, "TRYING FLASH...");
     delay(400);
@@ -771,32 +812,30 @@ void setup() {
       loadDefaultProfile(activeDefaultProfile);
     }
   }
-
+ 
   printConfig();
-
+ 
   // ---- Ready ----
   lcdLine(0, String(DEVICE_ID) + (offlineMode ? " OFFLINE" : " ONLINE"));
   lcdLine(1, offlineMode
     ? String("P:") + DEFAULT_PROFILE_NAMES[activeDefaultProfile]
     : "READY");
-
-  beep(1000, 200);
-  delay(300);
-  beep(1500, 100);
+ 
+  beepSweep(400, 2000, 1000);  // rising sweep on boot
 }
-
+ 
 // =====================
 // LOOP
 // =====================
 void loop() {
   unsigned long now = millis();
-
+ 
   // ---- Stop beep cleanly ----
   if (beepEnd && now > beepEnd) {
-    ledcWriteTone(0, 0);
+    ledcWriteTone(BUZZER_PIN, 0);
     beepEnd = 0;
   }
-
+ 
   // ---- WiFi keep-alive (only if not in hard offline mode) ----
   if (!offlineMode && now - lastWiFiCheck > 10000) {
     lastWiFiCheck = now;
@@ -809,11 +848,11 @@ void loop() {
       if (!timeIsSynced()) syncTime();
     }
   }
-
+ 
   // ---- Buttons ----
   bool runPressed  = readButton(START_BUTTON, lastRunButtonTime,  lastRunButtonState);
   bool stopPressed = readButton(STOP_BUTTON,  lastStopButtonTime, lastStopButtonState);
-
+ 
   // ---- STOP: cycle profiles when offline and idle; otherwise stop run ----
   if (stopPressed) {
     if (running) {
@@ -821,21 +860,21 @@ void loop() {
       runLocked = false;
       setSSR(false);
       Serial.println("STOPPED (LOCAL)");
-      beep(400, 400);
+      beepB(400, 300);
       if (wifiConnected) sendButtonEvent("STOP");
     } else if (offlineMode) {
       // Cycle to next default profile
       activeDefaultProfile = (activeDefaultProfile + 1) % 2;
       loadDefaultProfile(activeDefaultProfile);
       Serial.println("OFFLINE PROFILE: " + String(DEFAULT_PROFILE_NAMES[activeDefaultProfile]));
-      beep(800, 80);
-      delay(120);
-      beep(1100, 80);
+      beepB(800, 60);
+      delay(80);
+      beepB(1100, 60);
       lcdLine(0, String(DEVICE_ID) + " OFFLINE");
       lcdLine(1, String("P:") + DEFAULT_PROFILE_NAMES[activeDefaultProfile]);
     }
   }
-
+ 
   // ---- START button ----
   if (runPressed) {
     Serial.println("RUN BUTTON PRESSED");
@@ -843,59 +882,67 @@ void loop() {
       running   = true;
       startTime = now;
       Serial.println("RUN STARTED (LOCAL)");
-      beep(1200, 150);
+      beepB(1800, 120);           // high confirmation
+      delay(60);
+      beepB(900, 60); delay(40);  // three short lower tones
+      beepB(900, 60); delay(40);
+      beepB(900, 60);
       if (wifiConnected) sendButtonEvent("RUN");
     } else if (runLocked) {
       Serial.println("RUN LOCKED");
     }
   }
-
+ 
   // ---- Remote command (every ~10s, online only) ----
   if (wifiConnected && now % 10000 < 100) {
     String cmd  = getCommand();
     bool newCmd = (cmd != lastRemoteCmd);
     lastRemoteCmd = cmd;
-
+ 
     if (cmd == "RUN" && !running && newCmd) {
       running   = true;
       startTime = now;
       Serial.println("RUN STARTED (REMOTE)");
-      beep(1200, 150);
+      beepB(1800, 120);
+      delay(60);
+      beepB(900, 60); delay(40);
+      beepB(900, 60); delay(40);
+      beepB(900, 60);
     } else if (cmd == "STOP" && (running || newCmd)) {
       running   = false;
       runLocked = false;
       setSSR(false);
       Serial.println("STOPPED (REMOTE)");
-      beep(400, 400);
+      beepB(400, 300);
     }
   }
-
+ 
   // ---- Control loop (1s) ----
   if (running && now - lastControl >= 1000) {
     lastControl = now;
-
+ 
     unsigned long t        = now - startTime;
     int           totalTime = getTotalTime();
     float currentTemp      = thermocouple.readCelsius();
     float targetTemp       = getTargetTemp(t);
     int   timeLeft         = totalTime - (int)(t / 1000);
-
+ 
     lcdCurrentTemp = currentTemp;
     lcdTargetTemp  = targetTemp;
     lcdTimeLeft    = timeLeft;
-
+ 
     Serial.println("---- CONTROL ----");
     Serial.println("TIME:    " + String(t / 1000));
     Serial.println("CURRENT: " + String(currentTemp));
     Serial.println("TARGET:  " + String(targetTemp));
-
+ 
     // ---- Profile complete ----
     if ((int)(t / 1000) >= totalTime) {
       static int finishSendCount = 0;
-
+ 
       float finalTemp   = thermocouple.readCelsius();
       float finalTarget = profile[NUM_STEPS - 1].temp;
-
+ 
       setSSR(false);
       running          = false;
       runLocked        = false;
@@ -903,38 +950,38 @@ void loop() {
       lcdCurrentTemp   = finalTemp;
       lcdTargetTemp    = finalTarget;
       lcdTimeLeft      = 0;
-
+ 
       String finalCsv = String(totalTime) + "," +
                         String(finalTemp)  + "," +
                         String(finalTarget);
-
+ 
       if (finishSendCount < 5) {
         sendData(finalCsv, finalTemp, 0);
         finishSendCount++;
       }
-
+ 
       Serial.println("PROFILE COMPLETE");
-      beep(800,  200); delay(250);
-      beep(1200, 200); delay(250);
-      beep(1800, 400);
-
+      beepB(800,  200); delay(80);
+      beepB(1200, 200); delay(80);
+      beepB(1800, 400);
+ 
       lcdLine(0, "COMPLETE");
       lcdLine(1, String(DEVICE_ID) + (offlineMode ? " OFFLINE" : " ONLINE"));
       return;
     }
-
+ 
     controlSSR(currentTemp, targetTemp);
   }
-
+ 
   // ---- Upload every 20s (online only) ----
   if (wifiConnected && now - lastUpload >= 20000) {
     lastUpload = now;
-
+ 
     float  currentTemp = thermocouple.readCelsius();
     int    timeLeft    = 0;
     float  targetTemp  = currentTemp;
     String csv         = "";
-
+ 
     if (running) {
       unsigned long t = now - startTime;
       targetTemp = getTargetTemp(t);
@@ -943,15 +990,17 @@ void loop() {
             String(currentTemp) + "," +
             String(targetTemp);
     }
-
+ 
     Serial.println("---- UPLOAD ----");
     Serial.println("TEMP: " + String(currentTemp) + "  LEFT: " + String(timeLeft));
     sendData(csv, currentTemp, timeLeft);
   }
-
+ 
   // ---- LCD update (200ms) ----
   if (now - lastLCD >= 200) {
     lastLCD = now;
     updateLCD();
   }
 }
+ 
+ 
